@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en" data-title-en="Coding Bot Guide | Mattermost OCS Plugin" data-title-ko="코딩 봇 가이드 | Mattermost OCS Plugin">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Coding Bot Guide | Mattermost OCS Plugin</title>
+    <meta name="description" content="How coding bots work in Mattermost OCS Plugin through OpenCode project, file, search, and session APIs.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/site.css">
+    <script src="assets/site.js" defer></script>
+</head>
+<body>
+    <div class="shell page">
+        <header class="topbar">
+            <a class="brand" href="index.html">
+                <span class="brand-badge">OCS</span>
+                <span>Mattermost OCS Plugin</span>
+            </a>
+            <div class="topbar-right">
+                <div class="nav" data-lang="en">
+                    <a href="index.html">Home</a>
+                    <a href="coding-bots.html">Coding Bots</a>
+                    <a href="operations-guide.html">Operations</a>
+                    <a href="https://github.com/hkjang/mattermost-ocs-plugin">GitHub</a>
+                </div>
+                <div class="nav" data-lang="ko">
+                    <a href="index.html">홈</a>
+                    <a href="coding-bots.html">코딩 봇</a>
+                    <a href="operations-guide.html">운영</a>
+                    <a href="https://github.com/hkjang/mattermost-ocs-plugin">GitHub</a>
+                </div>
+                <div class="lang-switch" aria-label="Language switcher">
+                    <button type="button" data-lang-switch="en" aria-pressed="false">EN</button>
+                    <button type="button" data-lang-switch="ko" aria-pressed="false">KO</button>
+                </div>
+            </div>
+        </header>
+
+        <main data-lang="en">
+            <section class="hero">
+                <div class="eyebrow">Guide</div>
+                <h1>Coding Bot Guide</h1>
+                <p class="lead">Use OpenCode-backed coding agents inside Mattermost without inventing a second execution system.</p>
+            </section>
+            <section class="doc-layout">
+                <article class="doc-content">
+                    <h2>What Makes Coding Mode Different</h2>
+                    <p>Coding bots add repository-aware behavior on top of the same OpenCode session model used by conversation bots.</p>
+                    <ul>
+                        <li>Project context can be attached from the current OpenCode project.</li>
+                        <li>Referenced files can be looked up and inserted into the prompt.</li>
+                        <li>Coding plans can be returned as <code>ocs-task</code> cards.</li>
+                        <li>Approved commands can run through OpenCode session execution flows.</li>
+                        <li>Session diffs can be surfaced back into Mattermost.</li>
+                    </ul>
+
+                    <h2>API Boundaries</h2>
+                    <p>The plugin keeps coding mode inside OpenCode server capabilities. Project context, file lookup, search, shell, command execution, and diffs are routed through OpenCode APIs instead of hidden local filesystem execution in the plugin.</p>
+
+                    <h2>Recommended Bot Profiles</h2>
+                    <ul>
+                        <li><code>implementer</code>: for focused code changes</li>
+                        <li><code>reviewer</code>: for change analysis and risk spotting</li>
+                        <li><code>triage</code>: for reproduction, root-cause narrowing, and issue shaping</li>
+                        <li><code>release</code>: for packaging and rollout checklists</li>
+                    </ul>
+
+                    <h2>Prompt Enrichment</h2>
+                    <p>Use workspace snapshots sparingly and keep referenced file limits tight. It is usually better to attach a few highly relevant files than to overload the model with a large repository dump.</p>
+
+                    <h2>Approval Flow</h2>
+                    <ol>
+                        <li>The bot returns a coding plan and optional commands.</li>
+                        <li>The plugin renders a task card in Mattermost.</li>
+                        <li>A user explicitly approves a safe command.</li>
+                        <li>The result is reflected back into the same task context.</li>
+                    </ol>
+                </article>
+                <aside class="aside-stack">
+                    <div class="callout">
+                        <h3>Rollout Advice</h3>
+                        <p>Keep the first coding bot narrow. One repository, one team, a short allowlist, and visible approvals usually create a much smoother rollout than trying to automate everything at once.</p>
+                    </div>
+                    <div class="terminal">
+                        <code>@repo-coder-bot review the recent API changes in server/api.go
+
+session reused
+workspace snapshot attached
+referenced files attached
+task card created
+safe command pending approval</code>
+                    </div>
+                </aside>
+            </section>
+        </main>
+
+        <main data-lang="ko">
+            <section class="hero">
+                <div class="eyebrow">가이드</div>
+                <h1>코딩 봇 가이드</h1>
+                <p class="lead">Mattermost 안에서 OpenCode 기반 코딩 에이전트를 쓰되, 플러그인 내부에 별도 실행 체계를 억지로 만들지 않는 방법을 설명합니다.</p>
+            </section>
+            <section class="doc-layout">
+                <article class="doc-content">
+                    <h2>코딩 모드가 다른 점</h2>
+                    <p>코딩 봇은 대화 봇과 같은 OpenCode 세션 구조 위에 저장소 인식 기능을 추가합니다.</p>
+                    <ul>
+                        <li>현재 OpenCode 프로젝트 컨텍스트를 프롬프트에 붙일 수 있습니다.</li>
+                        <li>참조된 파일을 조회해 본문에 넣을 수 있습니다.</li>
+                        <li>코딩 계획을 <code>ocs-task</code> 카드로 돌려줄 수 있습니다.</li>
+                        <li>승인된 명령을 OpenCode 세션 실행 흐름으로 보낼 수 있습니다.</li>
+                        <li>session diff를 다시 Mattermost에 노출할 수 있습니다.</li>
+                    </ul>
+
+                    <h2>API 경계</h2>
+                    <p>코딩 모드는 OpenCode 서버가 공식적으로 제공하는 범위 안에서만 동작하도록 잡았습니다. 프로젝트 컨텍스트, 파일 조회, 검색, 셸, 명령 실행, diff 모두 OpenCode API를 통해 처리하고 플러그인 로컬 파일 시스템 실행에 의존하지 않습니다.</p>
+
+                    <h2>권장 봇 프로필</h2>
+                    <ul>
+                        <li><code>implementer</code>: 실제 코드 수정 중심</li>
+                        <li><code>reviewer</code>: 변경 분석과 리스크 점검 중심</li>
+                        <li><code>triage</code>: 재현과 원인 축소, 이슈 정리 중심</li>
+                        <li><code>release</code>: 패키징과 배포 체크리스트 중심</li>
+                    </ul>
+
+                    <h2>프롬프트 보강</h2>
+                    <p>워크스페이스 스냅샷과 파일 첨부는 과하지 않게 쓰는 편이 좋습니다. 큰 저장소를 통째로 넣기보다, 관련성이 높은 파일 몇 개를 정확히 붙이는 쪽이 훨씬 안정적입니다.</p>
+
+                    <h2>승인 흐름</h2>
+                    <ol>
+                        <li>봇이 코딩 계획과 선택적 명령 목록을 돌려줍니다.</li>
+                        <li>플러그인이 Mattermost 안에 태스크 카드를 렌더링합니다.</li>
+                        <li>사용자가 안전한 명령을 명시적으로 승인합니다.</li>
+                        <li>결과가 같은 태스크 맥락 안으로 다시 반영됩니다.</li>
+                    </ol>
+                </article>
+                <aside class="aside-stack">
+                    <div class="callout">
+                        <h3>배포 팁</h3>
+                        <p>처음 코딩 봇은 범위를 좁게 두는 편이 좋습니다. 저장소 하나, 팀 하나, 짧은 allowlist, 눈에 보이는 승인 흐름이 초반 안정화에 가장 효과적입니다.</p>
+                    </div>
+                    <div class="terminal">
+                        <code>@repo-coder-bot server/api.go 최근 변경을 리뷰해줘
+
+세션 재사용
+workspace snapshot 포함
+참조 파일 포함
+태스크 카드 생성
+안전 명령 승인 대기</code>
+                    </div>
+                </aside>
+            </section>
+        </main>
+    </div>
+</body>
+</html>

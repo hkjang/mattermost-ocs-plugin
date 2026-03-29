@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" data-title-en="Operations Guide | Mattermost OCS Plugin" data-title-ko="운영 가이드 | Mattermost OCS Plugin">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Operations Guide | Mattermost OCS Plugin</title>
+    <meta name="description" content="Run diagnostics, manage sessions, and operate Mattermost OCS Plugin safely in production.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/site.css">
+    <script src="assets/site.js" defer></script>
+</head>
+<body>
+    <div class="shell page">
+        <header class="topbar">
+            <a class="brand" href="index.html">
+                <span class="brand-badge">OCS</span>
+                <span>Mattermost OCS Plugin</span>
+            </a>
+            <div class="topbar-right">
+                <div class="nav" data-lang="en">
+                    <a href="index.html">Home</a>
+                    <a href="operations-guide.html">Operations</a>
+                    <a href="getting-started.html">Getting Started</a>
+                    <a href="https://github.com/hkjang/mattermost-ocs-plugin">GitHub</a>
+                </div>
+                <div class="nav" data-lang="ko">
+                    <a href="index.html">홈</a>
+                    <a href="operations-guide.html">운영</a>
+                    <a href="getting-started.html">시작하기</a>
+                    <a href="https://github.com/hkjang/mattermost-ocs-plugin">GitHub</a>
+                </div>
+                <div class="lang-switch" aria-label="Language switcher">
+                    <button type="button" data-lang-switch="en" aria-pressed="false">EN</button>
+                    <button type="button" data-lang-switch="ko" aria-pressed="false">KO</button>
+                </div>
+            </div>
+        </header>
+
+        <main data-lang="en">
+            <section class="hero">
+                <div class="eyebrow">Guide</div>
+                <h1>Operations Guide</h1>
+                <p class="lead">Health checks, diagnostics, session handling, and rollout guardrails for running the plugin in production.</p>
+            </section>
+            <section class="doc-layout">
+                <article class="doc-content">
+                    <h2>Health Checks</h2>
+                    <p>Use the admin diagnostics panel to inspect server health, version, agents, providers, active sessions, and recent bot synchronization state.</p>
+
+                    <h2>Session Management</h2>
+                    <p>The plugin keeps session mappings in the Mattermost plugin KV store. Admins can inspect active sessions, abort an active run, or reset a stored mapping when recovery is needed.</p>
+
+                    <h2>Error Handling</h2>
+                    <p>User-facing errors stay generalized while operational detail remains in logs and diagnostics. That keeps channel noise low without hiding useful debugging context from operators.</p>
+
+                    <h2>Logging</h2>
+                    <ul>
+                        <li>Keep usage logs enabled during rollout.</li>
+                        <li>Enable debug logging only while troubleshooting.</li>
+                        <li>Turn debug logging back off after gathering enough evidence.</li>
+                    </ul>
+
+                    <h2>Coding Bot Operations</h2>
+                    <p>Review command allowlists, channel restrictions, session reuse policy, and idle expiration closely. Also confirm the current OpenCode project is the one you expect before widening rollout.</p>
+
+                    <h2>Upgrade Checklist</h2>
+                    <ol>
+                        <li>Review release notes and configuration changes.</li>
+                        <li>Upload the new tarball.</li>
+                        <li>Run the connection test.</li>
+                        <li>Verify one conversation bot and one coding bot end-to-end.</li>
+                    </ol>
+                </article>
+                <aside class="aside-stack">
+                    <div class="callout">
+                        <h3>Production Habit</h3>
+                        <p>Treat coding bots like privileged automation. The best production posture is visible approvals, narrow channel access, and short operational feedback loops.</p>
+                    </div>
+                    <div class="status-card">
+                        <code>ops review
+- health green
+- session count sane
+- stuck runs aborted
+- command approvals visible
+- debug logs off after incident</code>
+                    </div>
+                </aside>
+            </section>
+        </main>
+
+        <main data-lang="ko">
+            <section class="hero">
+                <div class="eyebrow">가이드</div>
+                <h1>운영 가이드</h1>
+                <p class="lead">프로덕션에서 플러그인을 운영할 때 필요한 health 확인, 진단, 세션 처리, 점진 배포 기준을 정리했습니다.</p>
+            </section>
+            <section class="doc-layout">
+                <article class="doc-content">
+                    <h2>Health 확인</h2>
+                    <p>관리자 진단 화면에서 서버 health, 버전, agent, provider, 활성 세션, 최근 봇 동기화 상태를 확인합니다.</p>
+
+                    <h2>세션 관리</h2>
+                    <p>플러그인은 세션 매핑을 Mattermost 플러그인 KV 저장소에 보관합니다. 운영자는 활성 세션 조회, 실행 중단, 저장된 매핑 리셋을 통해 복구 작업을 할 수 있습니다.</p>
+
+                    <h2>오류 처리</h2>
+                    <p>사용자에게는 일반화된 실패 메시지를 보여주고, 자세한 운영 정보는 로그와 진단 화면에 남깁니다. 채널 소음을 줄이면서도 디버깅 정보는 잃지 않는 방식입니다.</p>
+
+                    <h2>로그 정책</h2>
+                    <ul>
+                        <li>도입 초기에는 usage log를 켜두는 편이 좋습니다.</li>
+                        <li>debug log는 문제 추적 중에만 잠시 켭니다.</li>
+                        <li>필요한 정보 확보 후에는 다시 끕니다.</li>
+                    </ul>
+
+                    <h2>코딩 봇 운영</h2>
+                    <p>명령 allowlist, 채널 제한, 세션 재사용 정책, idle 만료 기준을 특히 주의해서 봐야 합니다. 배포 범위를 넓히기 전에는 현재 OpenCode 프로젝트가 의도한 대상인지도 꼭 확인해야 합니다.</p>
+
+                    <h2>업그레이드 체크리스트</h2>
+                    <ol>
+                        <li>릴리즈 노트와 설정 변경점을 검토합니다.</li>
+                        <li>새 tarball을 업로드합니다.</li>
+                        <li>연결 테스트를 수행합니다.</li>
+                        <li>대화 봇 1개, 코딩 봇 1개를 끝까지 검증합니다.</li>
+                    </ol>
+                </article>
+                <aside class="aside-stack">
+                    <div class="callout">
+                        <h3>운영 원칙</h3>
+                        <p>코딩 봇은 권한 있는 자동화에 가깝게 취급하는 편이 좋습니다. 보이는 승인 흐름, 좁은 채널 범위, 짧은 피드백 루프가 가장 안정적인 운영 습관입니다.</p>
+                    </div>
+                    <div class="status-card">
+                        <code>운영 점검
+- health 정상
+- 세션 수 정상
+- 멈춘 실행 중단
+- 명령 승인 흐름 확인
+- 사고 후 debug log 비활성화</code>
+                    </div>
+                </aside>
+            </section>
+        </main>
+    </div>
+</body>
+</html>

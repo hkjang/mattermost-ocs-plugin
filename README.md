@@ -138,11 +138,13 @@ Important:
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md)
-- [Configuration Guide](docs/configuration-guide.md)
-- [Coding Bot Guide](docs/coding-bots.md)
-- [Operations Guide](docs/operations-guide.md)
-- [GitHub Pages Promo Site](docs/index.html)
+- [Docs Home](https://hkjang.github.io/mattermost-ocs-plugin/)
+- [Getting Started Page](https://hkjang.github.io/mattermost-ocs-plugin/getting-started.html)
+- [Configuration Guide Page](https://hkjang.github.io/mattermost-ocs-plugin/configuration-guide.html)
+- [Coding Bot Guide Page](https://hkjang.github.io/mattermost-ocs-plugin/coding-bots.html)
+- [Operations Guide Page](https://hkjang.github.io/mattermost-ocs-plugin/operations-guide.html)
+
+The GitHub Pages docs switch between English and Korean based on the browser language, and users can override the choice with the built-in language toggle.
 
 ## Build And Package
 

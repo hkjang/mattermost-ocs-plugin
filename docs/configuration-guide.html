@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en" data-title-en="Configuration Guide | Mattermost OCS Plugin" data-title-ko="설정 가이드 | Mattermost OCS Plugin">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Configuration Guide | Mattermost OCS Plugin</title>
+    <meta name="description" content="Service, runtime, session, and bot configuration guide for Mattermost OCS Plugin.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/site.css">
+    <script src="assets/site.js" defer></script>
+</head>
+<body>
+    <div class="shell page">
+        <header class="topbar">
+            <a class="brand" href="index.html">
+                <span class="brand-badge">OCS</span>
+                <span>Mattermost OCS Plugin</span>
+            </a>
+            <div class="topbar-right">
+                <div class="nav" data-lang="en">
+                    <a href="index.html">Home</a>
+                    <a href="configuration-guide.html">Configuration</a>
+                    <a href="coding-bots.html">Coding Bots</a>
+                    <a href="https://github.com/hkjang/mattermost-ocs-plugin">GitHub</a>
+                </div>
+                <div class="nav" data-lang="ko">
+                    <a href="index.html">홈</a>
+                    <a href="configuration-guide.html">설정</a>
+                    <a href="coding-bots.html">코딩 봇</a>
+                    <a href="https://github.com/hkjang/mattermost-ocs-plugin">GitHub</a>
+                </div>
+                <div class="lang-switch" aria-label="Language switcher">
+                    <button type="button" data-lang-switch="en" aria-pressed="false">EN</button>
+                    <button type="button" data-lang-switch="ko" aria-pressed="false">KO</button>
+                </div>
+            </div>
+        </header>
+
+        <main data-lang="en">
+            <section class="hero">
+                <div class="eyebrow">Guide</div>
+                <h1>Configuration Guide</h1>
+                <p class="lead">How to shape service access, runtime behavior, session policy, and bot-specific defaults for real deployment.</p>
+            </section>
+            <section class="doc-layout">
+                <article class="doc-content">
+                    <h2>Service</h2>
+                    <p>These values control how Mattermost reaches your OpenCode server.</p>
+                    <ul>
+                        <li><code>service.base_url</code>: OpenCode server base URL</li>
+                        <li><code>service.username</code>: Basic Auth username</li>
+                        <li><code>service.password</code>: Basic Auth password</li>
+                        <li><code>service.allow_hosts</code>: optional comma-separated allow list</li>
+                    </ul>
+
+                    <h2>Runtime</h2>
+                    <ul>
+                        <li><code>runtime.default_timeout_seconds</code>: default request timeout</li>
+                        <li><code>runtime.enable_streaming</code>: enable SSE-backed post updates</li>
+                        <li><code>runtime.streaming_update_ms</code>: post refresh cadence</li>
+                        <li><code>runtime.context_post_limit</code>: number of recent Mattermost posts injected as context</li>
+                        <li><code>runtime.max_input_length</code> and <code>runtime.max_output_length</code>: prompt and response guardrails</li>
+                        <li><code>runtime.enable_usage_logs</code>: structured diagnostics for operations</li>
+                    </ul>
+
+                    <h2>OpenCode Defaults</h2>
+                    <p>Use <code>opencode_defaults.provider_id</code>, <code>opencode_defaults.model_id</code>, and <code>opencode_defaults.agent_id</code> to define global fallbacks when a bot does not override them.</p>
+
+                    <h2>Session Policy</h2>
+                    <ul>
+                        <li><code>session_policy.reuse_scope</code>: <code>thread</code>, <code>dm</code>, or <code>channel</code></li>
+                        <li><code>session_policy.idle_expire_minutes</code>: replace inactive sessions after the configured idle window</li>
+                    </ul>
+
+                    <h2>Bot Definitions</h2>
+                    <p>Each bot can define its own display name, prompt, model, agent, access control rules, tool policy, and mode.</p>
+
+                    <h3>Conversation Mode</h3>
+                    <p>Use for summaries, drafting, support, and general assistant workflows that do not need coding-specific UI.</p>
+
+                    <h3>Coding Mode</h3>
+                    <p>Use for project-aware development help, task cards, command approval, and session diff review.</p>
+
+                    <h2>Coding Settings</h2>
+                    <ul>
+                        <li><code>coding.profile</code>: semantic role such as <code>implementer</code> or <code>reviewer</code></li>
+                        <li><code>coding.workspace_root</code>: optional OpenCode project-relative working directory hint</li>
+                        <li><code>coding.allowed_paths</code>: restrict surfaced project paths</li>
+                        <li><code>coding.command_allowlist</code>: approved command prefixes</li>
+                        <li><code>coding.require_command_approval</code>: require an explicit user action before execution</li>
+                        <li><code>coding.include_workspace_snapshot</code> and <code>coding.include_referenced_files</code>: prompt enrichment controls</li>
+                    </ul>
+                </article>
+                <aside class="aside-stack">
+                    <div class="callout">
+                        <h3>Recommended Defaults</h3>
+                        <p>Enable streaming, keep context limits moderate, and start coding bots with a tight command allowlist and narrow channel access.</p>
+                    </div>
+                    <div class="status-card">
+                        <code>rollout defaults
+- streaming on
+- thread reuse
+- usage logs on
+- coding approvals on
+- team or channel limits enabled</code>
+                    </div>
+                </aside>
+            </section>
+        </main>
+
+        <main data-lang="ko">
+            <section class="hero">
+                <div class="eyebrow">가이드</div>
+                <h1>설정 가이드</h1>
+                <p class="lead">서비스 접근, 런타임 동작, 세션 정책, 봇별 기본값을 실제 운영 기준으로 어떻게 잡을지 설명합니다.</p>
+            </section>
+            <section class="doc-layout">
+                <article class="doc-content">
+                    <h2>Service</h2>
+                    <p>Mattermost가 OpenCode 서버에 어떻게 연결할지 결정하는 값들입니다.</p>
+                    <ul>
+                        <li><code>service.base_url</code>: OpenCode 서버 기본 URL</li>
+                        <li><code>service.username</code>: Basic Auth 사용자명</li>
+                        <li><code>service.password</code>: Basic Auth 비밀번호</li>
+                        <li><code>service.allow_hosts</code>: 선택적 허용 호스트 목록</li>
+                    </ul>
+
+                    <h2>Runtime</h2>
+                    <ul>
+                        <li><code>runtime.default_timeout_seconds</code>: 기본 요청 타임아웃</li>
+                        <li><code>runtime.enable_streaming</code>: SSE 기반 포스트 갱신 사용 여부</li>
+                        <li><code>runtime.streaming_update_ms</code>: 포스트 갱신 주기</li>
+                        <li><code>runtime.context_post_limit</code>: 컨텍스트로 넣을 최근 Mattermost 포스트 수</li>
+                        <li><code>runtime.max_input_length</code>, <code>runtime.max_output_length</code>: 입력과 출력 길이 가드레일</li>
+                        <li><code>runtime.enable_usage_logs</code>: 운영 진단용 사용 로그 저장 여부</li>
+                    </ul>
+
+                    <h2>OpenCode Defaults</h2>
+                    <p><code>opencode_defaults.provider_id</code>, <code>model_id</code>, <code>agent_id</code>는 봇이 따로 지정하지 않았을 때 쓰는 전역 기본값입니다.</p>
+
+                    <h2>Session Policy</h2>
+                    <ul>
+                        <li><code>session_policy.reuse_scope</code>: <code>thread</code>, <code>dm</code>, <code>channel</code></li>
+                        <li><code>session_policy.idle_expire_minutes</code>: 일정 시간 미사용 세션 교체 기준</li>
+                    </ul>
+
+                    <h2>Bot Definitions</h2>
+                    <p>각 봇은 표시 이름, 프롬프트, 모델, 에이전트, 접근 제한, 도구 정책, 실행 모드를 따로 가질 수 있습니다.</p>
+
+                    <h3>대화 모드</h3>
+                    <p>요약, 초안 작성, 지원형 봇, 일반 어시스턴트 흐름에 적합합니다.</p>
+
+                    <h3>코딩 모드</h3>
+                    <p>프로젝트 기반 개발 지원, 태스크 카드, 명령 승인, session diff 확인에 적합합니다.</p>
+
+                    <h2>코딩 설정</h2>
+                    <ul>
+                        <li><code>coding.profile</code>: <code>implementer</code>, <code>reviewer</code> 같은 역할 이름</li>
+                        <li><code>coding.workspace_root</code>: OpenCode 프로젝트 상대 기준 작업 디렉터리 힌트</li>
+                        <li><code>coding.allowed_paths</code>: 노출 가능한 프로젝트 경로 제한</li>
+                        <li><code>coding.command_allowlist</code>: 허용 명령 prefix</li>
+                        <li><code>coding.require_command_approval</code>: 실행 전 사용자 승인 필요 여부</li>
+                        <li><code>coding.include_workspace_snapshot</code>, <code>coding.include_referenced_files</code>: 프롬프트 보강 옵션</li>
+                    </ul>
+                </article>
+                <aside class="aside-stack">
+                    <div class="callout">
+                        <h3>권장 기본값</h3>
+                        <p>스트리밍은 켜고, 컨텍스트 길이는 과하지 않게 두며, 코딩 봇은 좁은 채널 범위와 엄격한 명령 허용 목록으로 시작하는 편이 좋습니다.</p>
+                    </div>
+                    <div class="status-card">
+                        <code>권장 시작값
+- streaming 사용
+- thread 재사용
+- usage log 사용
+- coding approval 사용
+- 팀/채널 제한 적용</code>
+                    </div>
+                </aside>
+            </section>
+        </main>
+    </div>
+</body>
+</html>
