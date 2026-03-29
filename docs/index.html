@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mattermost OCS Plugin</title>
+    <meta name="description" content="Mattermost OCS Plugin connects Mattermost bots to OpenCode sessions for conversation workflows, coding task cards, and streaming replies.">
+    <meta property="og:title" content="Mattermost OCS Plugin">
+    <meta property="og:description" content="Mattermost bots backed by OpenCode sessions for conversation workflows and coding agents.">
+    <meta property="og:type" content="website">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #f4efe4;
+            --panel: rgba(255, 251, 243, 0.92);
+            --ink: #1b2231;
+            --muted: #586273;
+            --line: rgba(27, 34, 49, 0.12);
+            --accent: #0f766e;
+            --accent-strong: #0b5d57;
+            --accent-soft: rgba(15, 118, 110, 0.12);
+            --signal: #c96a2f;
+            --shadow: 0 20px 60px rgba(27, 34, 49, 0.12);
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(201, 106, 47, 0.14), transparent 28%),
+                radial-gradient(circle at top right, rgba(15, 118, 110, 0.18), transparent 32%),
+                linear-gradient(180deg, #f7f0e3 0%, var(--bg) 52%, #efe6d6 100%);
+            font-family: "IBM Plex Sans KR", sans-serif;
+            line-height: 1.6;
+        }
+
+        a { color: inherit; }
+        .shell { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; }
+        .hero { padding: 32px 0 80px; }
+        .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0 28px; }
+        .brand { display: inline-flex; align-items: center; gap: 12px; font-family: "Space Grotesk", sans-serif; font-size: 18px; font-weight: 700; }
+        .brand-badge { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 14px; background: linear-gradient(135deg, var(--accent), var(--signal)); color: white; box-shadow: var(--shadow); }
+        .nav { display: flex; gap: 12px; flex-wrap: wrap; }
+        .nav a, .button, .mini-link { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 999px; text-decoration: none; transition: transform 180ms ease, background 180ms ease, border-color 180ms ease; }
+        .nav a, .mini-link { padding: 10px 16px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.5); }
+        .nav a:hover, .mini-link:hover, .button:hover { transform: translateY(-1px); }
+        .hero-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr); gap: 28px; }
+        .hero-copy, .hero-panel, .section-card, .feature-card, .guide-card { border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px); box-shadow: var(--shadow); }
+        .hero-copy { border-radius: 32px; padding: 34px; }
+        .eyebrow { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-strong); font-size: 13px; font-weight: 700; text-transform: uppercase; }
+        h1, h2, h3 { margin: 0; font-family: "Space Grotesk", sans-serif; line-height: 1.05; }
+        h1 { margin-top: 18px; font-size: clamp(40px, 7vw, 76px); letter-spacing: -0.04em; }
+        .lead { margin-top: 18px; font-size: 19px; color: var(--muted); max-width: 62ch; }
+        .cta-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
+        .button { padding: 14px 22px; font-weight: 700; border: 1px solid transparent; }
+        .button-primary { background: var(--ink); color: white; }
+        .button-secondary { background: transparent; border-color: var(--line); }
+        .hero-points { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 28px; }
+        .hero-points div { padding: 14px 16px; border-radius: 18px; background: rgba(255,255,255,0.56); border: 1px solid rgba(27,34,49,0.08); font-size: 14px; color: var(--muted); }
+        .hero-panel { border-radius: 32px; padding: 24px; display: grid; gap: 16px; align-content: start; }
+        .panel-label { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--signal); }
+        .terminal, .status-card { border-radius: 22px; background: #1f2532; color: #f1f5fb; padding: 18px; border: 1px solid rgba(255,255,255,0.08); }
+        .status-card { background: linear-gradient(180deg, #142a29, #13211f); }
+        .terminal code, .status-card code { font-family: ui-monospace, Consolas, monospace; white-space: pre-wrap; display: block; font-size: 13px; line-height: 1.55; }
+        main { padding-bottom: 80px; }
+        .section { margin-top: 26px; }
+        .section-card { border-radius: 28px; padding: 28px; }
+        .section-card p { margin: 14px 0 0; color: var(--muted); }
+        .feature-grid, .guide-grid, .mode-row { display: grid; gap: 18px; margin-top: 18px; }
+        .feature-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .guide-grid, .mode-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .feature-card, .guide-card { border-radius: 24px; padding: 22px; }
+        .feature-card p, .guide-card p { margin: 12px 0 0; color: var(--muted); }
+        .list { margin: 16px 0 0; padding-left: 18px; color: var(--muted); }
+        .list li + li { margin-top: 8px; }
+        .footer { padding: 28px 0 54px; color: var(--muted); font-size: 14px; }
+
+        @media (max-width: 920px) {
+            .hero-grid, .feature-grid, .guide-grid, .mode-row, .hero-points { grid-template-columns: 1fr; }
+            .topbar { flex-direction: column; align-items: flex-start; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .nav a, .mini-link, .button { transition: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="shell hero">
+        <div class="topbar">
+            <div class="brand">
+                <span class="brand-badge">OCS</span>
+                <span>Mattermost OCS Plugin</span>
+            </div>
+            <nav class="nav">
+                <a href="https://github.com/hkjang/mattermost-ocs-plugin">Repository</a>
+                <a href="https://github.com/hkjang/mattermost-ocs-plugin/blob/main/docs/getting-started.md">Getting Started</a>
+                <a href="https://github.com/hkjang/mattermost-ocs-plugin/blob/main/docs/coding-bots.md">Coding Bots</a>
+                <a href="https://github.com/hkjang/mattermost-ocs-plugin/blob/main/docs/configuration-guide.md">Configuration</a>
+            </nav>
+        </div>
+
+        <div class="hero-grid">
+            <section class="hero-copy">
+                <div class="eyebrow">Mattermost x OpenCode</div>
+                <h1>Run conversation bots and coding agents where your team already works.</h1>
+                <p class="lead">
+                    Mattermost OCS Plugin turns Mattermost channels, threads, and DMs into OpenCode-powered workspaces with streaming replies, reusable sessions, coding task cards, and admin controls that hold up in real operations.
+                </p>
+                <div class="cta-row">
+                    <a class="button button-primary" href="getting-started.md">Start Installing</a>
+                    <a class="button button-secondary" href="https://github.com/hkjang/mattermost-ocs-plugin/releases">Download Release</a>
+                </div>
+                <div class="hero-points">
+                    <div>Keep long-running assistant context per thread or DM instead of treating every request like a one-shot run.</div>
+                    <div>Split bots into conversation mode and coding mode without changing how users work in Mattermost.</div>
+                    <div>Approve coding commands inside task cards and review OpenCode session diffs in the same thread.</div>
+                    <div>Give admins a usable panel for health checks, providers, agents, session resets, and diagnostics.</div>
+                </div>
+            </section>
+
+            <aside class="hero-panel">
+                <div class="panel-label">Sample Flow</div>
+                <div class="terminal">
+                    <code>@repo-coder-bot inspect server/api.go and explain why coding command approval is blocked
+
+OpenCode session: reused
+Workspace snapshot: loaded
+Referenced files: attached
+Response: streamed into one Mattermost post
+Task card: created
+Command: waiting for approval</code>
+                </div>
+                <div class="panel-label">What Teams Get</div>
+                <div class="status-card">
+                    <code>conversation mode
+- summaries
+- drafting
+- support workflows
+
+coding mode
+- project search
+- file context
+- session diff
+- approved commands</code>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <main class="shell">
+        <section class="section section-card">
+            <h2>Built for how Mattermost teams actually operate</h2>
+            <p>
+                The plugin is centered on documented OpenCode server APIs. That means the same integration can support general assistants, coding bots, project-aware task flows, and streaming responses without inventing a second execution model inside the Mattermost plugin.
+            </p>
+        </section>
+
+        <section class="section">
+            <div class="feature-grid">
+                <article class="feature-card">
+                    <h3>Session-first architecture</h3>
+                    <p>Reuse OpenCode sessions per thread, DM, or channel policy so follow-up prompts stay grounded in the same conversation history.</p>
+                </article>
+                <article class="feature-card">
+                    <h3>Streaming that feels alive</h3>
+                    <p>Stream assistant output into one Mattermost post, including reasoning fade-out support for models that expose `<think>` sections.</p>
+                </article>
+                <article class="feature-card">
+                    <h3>Admin-ready diagnostics</h3>
+                    <p>Check health, agents, providers, managed bots, and active sessions without leaving Mattermost administration screens.</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="section section-card">
+            <h2>Conversation and coding modes, one plugin</h2>
+            <div class="mode-row">
+                <article class="feature-card">
+                    <h3>Conversation Mode</h3>
+                    <ul class="list">
+                        <li>thread summaries and Q&amp;A</li>
+                        <li>support or drafting bots</li>
+                        <li>default agent and model selection per bot</li>
+                        <li>context-aware replies for channels, threads, and DMs</li>
+                    </ul>
+                </article>
+                <article class="feature-card">
+                    <h3>Coding Mode</h3>
+                    <ul class="list">
+                        <li>OpenCode project and file API integration</li>
+                        <li>coding task cards inside Mattermost</li>
+                        <li>approved command execution through OpenCode sessions</li>
+                        <li>session diff visibility for developer workflows</li>
+                    </ul>
+                </article>
+            </div>
+        </section>
+
+        <section class="section section-card">
+            <h2>Documentation</h2>
+            <div class="guide-grid">
+                <article class="guide-card">
+                    <h3>Getting Started</h3>
+                    <p>Install the plugin, configure OpenCode access, add bots, and validate the first end-to-end workflow.</p>
+                    <p><a class="mini-link" href="https://github.com/hkjang/mattermost-ocs-plugin/blob/main/docs/getting-started.md">Open Guide</a></p>
+                </article>
+                <article class="guide-card">
+                    <h3>Configuration Guide</h3>
+                    <p>Understand service, runtime, session, and coding bot settings with operational recommendations.</p>
+                    <p><a class="mini-link" href="https://github.com/hkjang/mattermost-ocs-plugin/blob/main/docs/configuration-guide.md">Open Guide</a></p>
+                </article>
+                <article class="guide-card">
+                    <h3>Coding Bot Guide</h3>
+                    <p>Learn how coding mode works, what is routed through OpenCode APIs, and how to roll it out safely.</p>
+                    <p><a class="mini-link" href="https://github.com/hkjang/mattermost-ocs-plugin/blob/main/docs/coding-bots.md">Open Guide</a></p>
+                </article>
+                <article class="guide-card">
+                    <h3>Operations Guide</h3>
+                    <p>Run health checks, diagnose failures, manage sessions, and keep production rollout controlled.</p>
+                    <p><a class="mini-link" href="https://github.com/hkjang/mattermost-ocs-plugin/blob/main/docs/operations-guide.md">Open Guide</a></p>
+                </article>
+            </div>
+        </section>
+
+        <section class="section section-card">
+            <h2>OpenCode-native by design</h2>
+            <p>
+                Coding workflows in this plugin are intentionally limited to what can be represented through OpenCode server APIs. Project context, file content, search, VCS data, shell execution, command execution, and session diffs all go through OpenCode instead of hidden local plugin behavior.
+            </p>
+        </section>
+    </main>
+
+    <footer class="shell footer">
+        <p>Mattermost OCS Plugin for OpenCode-backed assistant and coding workflows.</p>
+    </footer>
+</body>
+</html>
