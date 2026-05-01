@@ -9,6 +9,7 @@ import ConfigSetting from './components/config_setting';
 import PluginErrorBoundary from './components/error_boundary';
 import OpenCodeBotPost from './components/opencode_bot_post';
 import RHSPane from './components/rhs';
+import {handlePostedOpenCodeDMThread} from './dm_thread_rhs';
 import PostEventListener from './post_event_listener';
 import {buildPluginWebSocketEventName, handleStreamingPostUpdateEvent} from './streaming';
 import type {PluginRegistry} from './types/mattermost-webapp';
@@ -76,6 +77,10 @@ export default class Plugin {
                 this.postEventListener.handlePostUpdateWebsockets(msg as any);
             },
         );
+
+        registry.registerWebSocketEventHandler('posted', (msg) => {
+            handlePostedOpenCodeDMThread(store, msg as any);
+        });
 
         if (registry.registerPostTypeComponent) {
             registry.registerPostTypeComponent('custom_opencode_bot', (props: any) => (

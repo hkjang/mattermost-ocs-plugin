@@ -4,15 +4,17 @@ import type {WebSocketMessage} from '@mattermost/client';
 
 import PostText from './post_text';
 
-import {isOpenCodeAwaitingFirstChunk} from '../streaming';
-import {parseThinkTaggedMessage} from '../think_parsing';
 import type {CodingTask} from '../client';
 import {getCodingTask, runCodingTaskCommand} from '../client';
+import {isOpenCodeAwaitingFirstChunk} from '../streaming';
+import {parseThinkTaggedMessage} from '../think_parsing';
 
 type PostUpdateData = {
     post_id?: string;
     next?: string;
     control?: string;
+    reasoning?: string;
+    tool_status?: string;
 };
 
 type Props = {
@@ -32,6 +34,17 @@ const statusStyle: React.CSSProperties = {
     fontSize: '12px',
     fontWeight: 600,
     letterSpacing: '0.01em',
+};
+
+const toolStatusStyle: React.CSSProperties = {
+    alignSelf: 'flex-start',
+    background: 'rgba(var(--center-channel-color-rgb), 0.06)',
+    border: '1px solid rgba(var(--center-channel-color-rgb), 0.12)',
+    borderRadius: '999px',
+    color: 'rgba(var(--center-channel-color-rgb), 0.72)',
+    fontSize: '12px',
+    fontWeight: 600,
+    padding: '4px 9px',
 };
 
 const precontentStyle: React.CSSProperties = {
@@ -56,7 +69,7 @@ const reasoningCardStyle: React.CSSProperties = {
     border: '1px solid rgba(var(--center-channel-color-rgb), 0.12)',
     borderRadius: '12px',
     overflow: 'hidden',
-    transition: 'opacity 420ms ease, max-height 420ms ease, margin 420ms ease, padding 420ms ease',
+    transition: 'opacity 520ms ease, max-height 520ms ease, margin 520ms ease, padding 520ms ease',
 };
 
 const reasoningHeaderStyle: React.CSSProperties = {
@@ -88,8 +101,8 @@ const reasoningButtonStyle: React.CSSProperties = {
     padding: 0,
 };
 
-const reasoningFadeDelayMS = 2600;
-const reasoningFadeDurationMS = 420;
+const reasoningFadeDelayMS = 2400;
+const reasoningFadeDurationMS = 520;
 const codingCardStyle: React.CSSProperties = {
     background: 'rgba(var(--center-channel-color-rgb), 0.04)',
     border: '1px solid rgba(var(--center-channel-color-rgb), 0.12)',
@@ -104,6 +117,8 @@ export default function OpenCodeBotPost(props: Props) {
     const [message, setMessage] = useState(getRenderableMessage(props.post));
     const [generating, setGenerating] = useState(isStreamingPost(props.post));
     const [precontent, setPrecontent] = useState(isOpenCodeAwaitingFirstChunk(props.post));
+    const [reasoningOverride, setReasoningOverride] = useState(getPostReasoning(props.post));
+    const [toolStatus, setToolStatus] = useState(getPostToolStatus(props.post));
     const [reasoningVisible, setReasoningVisible] = useState(false);
     const [reasoningFading, setReasoningFading] = useState(false);
     const [reasoningExpanded, setReasoningExpanded] = useState(false);
@@ -117,11 +132,21 @@ export default function OpenCodeBotPost(props: Props) {
         setMessage(getRenderableMessage(props.post));
         setGenerating(isStreamingPost(props.post));
         setPrecontent(isOpenCodeAwaitingFirstChunk(props.post));
+        setReasoningOverride((current) => {
+            const nextReasoning = getPostReasoning(props.post);
+            if (nextReasoning || isStreamingPost(props.post)) {
+                return nextReasoning;
+            }
+            return current;
+        });
+        setToolStatus(getPostToolStatus(props.post));
     }, [
         props.post.message,
         props.post.props?.opencode_streaming,
         props.post.props?.opencode_stream_status,
         props.post.props?.opencode_stream_placeholder,
+        props.post.props?.opencode_reasoning,
+        props.post.props?.opencode_tool_status,
         props.post.props?.opencode_coding_task,
         props.post.props?.opencode_task_id,
     ]);
@@ -139,6 +164,8 @@ export default function OpenCodeBotPost(props: Props) {
     }, [props.post.id, props.post.props?.opencode_task_id]);
 
     const renderableMessage = useMemo(() => parseThinkTaggedMessage(message), [message]);
+    const reasoningMessage = reasoningOverride || renderableMessage.thinkMessage;
+    const reasoningOpen = Boolean(renderableMessage.thinkOpen && !reasoningOverride);
     const hasVisibleResponse = renderableMessage.responseMessage.trim() !== '';
     const canAutoHideReasoning = hasVisibleResponse;
 
@@ -151,14 +178,14 @@ export default function OpenCodeBotPost(props: Props) {
     useEffect(() => {
         clearReasoningTimers(fadeTimerRef, hideTimerRef);
 
-        if (!renderableMessage.thinkMessage) {
+        if (!reasoningMessage) {
             setReasoningVisible(false);
             setReasoningFading(false);
             setReasoningExpanded(false);
             return;
         }
 
-        if (generating || renderableMessage.thinkOpen || reasoningExpanded || !canAutoHideReasoning) {
+        if (generating || reasoningOpen || reasoningExpanded || !canAutoHideReasoning) {
             setReasoningVisible(true);
             setReasoningFading(false);
             return;
@@ -176,9 +203,9 @@ export default function OpenCodeBotPost(props: Props) {
     }, [
         canAutoHideReasoning,
         generating,
+        reasoningMessage,
+        reasoningOpen,
         reasoningExpanded,
-        renderableMessage.thinkMessage,
-        renderableMessage.thinkOpen,
     ]);
 
     const listener = useMemo(() => {
@@ -192,22 +219,32 @@ export default function OpenCodeBotPost(props: Props) {
                 setGenerating(true);
                 setPrecontent(true);
                 setMessage('');
+                setReasoningOverride('');
+                setToolStatus('');
                 setReasoningVisible(false);
                 setReasoningFading(false);
                 setReasoningExpanded(false);
                 return;
             }
 
+            if (typeof data.reasoning === 'string') {
+                setReasoningOverride(data.reasoning);
+            }
+
+            if (typeof data.tool_status === 'string') {
+                setToolStatus(data.tool_status);
+            }
+
             if (typeof data.next === 'string' && data.next !== '') {
                 setGenerating(true);
                 setPrecontent(false);
                 setMessage(data.next);
-                return;
             }
 
             if (data.control === 'end' || data.control === 'cancel') {
                 setGenerating(false);
                 setPrecontent(false);
+                setToolStatus('');
             }
         };
     }, [props.post.id]);
@@ -254,7 +291,10 @@ export default function OpenCodeBotPost(props: Props) {
                         <div style={{fontSize: '12px'}}>
                             <strong>{'Session Diff'}</strong>
                             {(codingTask.diffs || []).slice(0, 8).map((item) => (
-                                <div key={`${item.path}:${item.summary || ''}`} style={{marginTop: '4px'}}>
+                                <div
+                                    key={`${item.path}:${item.summary || ''}`}
+                                    style={{marginTop: '4px'}}
+                                >
                                     <div>{item.path}</div>
                                     {item.summary && <div style={{opacity: 0.85, whiteSpace: 'pre-wrap'}}>{item.summary}</div>}
                                 </div>
@@ -265,7 +305,10 @@ export default function OpenCodeBotPost(props: Props) {
                         <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
                             <strong>{'Commands'}</strong>
                             {codingTask.commands?.map((command) => (
-                                <div key={command.id} style={{border: '1px solid rgba(var(--center-channel-color-rgb), 0.12)', borderRadius: '10px', padding: '10px'}}>
+                                <div
+                                    key={command.id}
+                                    style={{border: '1px solid rgba(var(--center-channel-color-rgb), 0.12)', borderRadius: '10px', padding: '10px'}}
+                                >
                                     <div style={{fontSize: '12px', fontWeight: 600}}>{command.title || command.command}</div>
                                     <div style={{fontSize: '12px', whiteSpace: 'pre-wrap'}}>{command.command}</div>
                                     {command.reason && <div style={{fontSize: '12px', opacity: 0.85}}>{command.reason}</div>}
@@ -287,7 +330,7 @@ export default function OpenCodeBotPost(props: Props) {
                                             style={{marginTop: '8px'}}
                                             type='button'
                                         >
-                                            {runningCommandID === command.id ? 'Running...' : (command.requires_approval ? 'Approve & Run' : 'Run Command')}
+                                            {getCommandButtonLabel(runningCommandID === command.id, command.requires_approval)}
                                         </button>
                                     )}
                                 </div>
@@ -296,7 +339,7 @@ export default function OpenCodeBotPost(props: Props) {
                     )}
                 </div>
             )}
-            {renderableMessage.thinkMessage && (
+            {reasoningMessage && (
                 <>
                     {reasoningVisible ? (
                         <div
@@ -311,11 +354,11 @@ export default function OpenCodeBotPost(props: Props) {
                             <div style={reasoningHeaderStyle}>
                                 <span style={{alignItems: 'center', display: 'inline-flex', gap: '8px'}}>
                                     {generating && <span style={spinnerStyle}/>}
-                                    {generating ? 'Reasoning...' : 'Reasoning'}
+                                    {generating || reasoningOpen ? 'Reasoning...' : 'Reasoning'}
                                 </span>
                             </div>
                             <div style={reasoningBodyStyle}>
-                                {renderableMessage.thinkMessage}
+                                {reasoningMessage}
                             </div>
                         </div>
                     ) : (
@@ -334,13 +377,18 @@ export default function OpenCodeBotPost(props: Props) {
                     )}
                 </>
             )}
-            {(hasVisibleResponse || (generating && !precontent && !renderableMessage.thinkMessage)) && (
+            {(hasVisibleResponse || (generating && !precontent && !reasoningMessage)) && (
                 <PostText
                     channelID={props.post.channel_id}
                     message={renderableMessage.responseMessage}
                     postID={props.post.id}
                     showCursor={generating && !precontent && hasVisibleResponse}
                 />
+            )}
+            {toolStatus && generating && !precontent && (
+                <span style={toolStatusStyle}>
+                    {toolStatus}
+                </span>
             )}
             {generating && !precontent && hasVisibleResponse && (
                 <span style={statusStyle}>
@@ -368,8 +416,25 @@ function getTaskID(post: any) {
     return typeof taskID === 'string' ? taskID : '';
 }
 
+function getCommandButtonLabel(isRunning: boolean, requiresApproval?: boolean) {
+    if (isRunning) {
+        return 'Running...';
+    }
+    return requiresApproval ? 'Approve & Run' : 'Run Command';
+}
+
 function isStreamingPost(post: any) {
     return post?.props?.opencode_streaming === 'true' || post?.props?.opencode_stream_status === 'streaming';
+}
+
+function getPostReasoning(post: any) {
+    const reasoning = post?.props?.opencode_reasoning;
+    return typeof reasoning === 'string' ? reasoning : '';
+}
+
+function getPostToolStatus(post: any) {
+    const status = post?.props?.opencode_tool_status;
+    return typeof status === 'string' ? status : '';
 }
 
 function getRenderableMessage(post: any) {

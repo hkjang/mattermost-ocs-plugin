@@ -121,12 +121,100 @@ func TestParseOpenCodeStreamSSELine(t *testing.T) {
 	require.False(t, completed)
 }
 
+func TestOpenCodeStreamStateSeparatesOfficialPartTypes(t *testing.T) {
+	state := &openCodeStreamState{}
+
+	require.True(t, state.apply(openCodeStreamEvent{
+		Type: "message.part.updated",
+		Properties: map[string]any{
+			"part": map[string]any{
+				"id":        "text-1",
+				"type":      "text",
+				"text":      "Final answer",
+				"sessionID": "session-123",
+			},
+			"delta": "Final answer",
+		},
+	}))
+	require.True(t, state.apply(openCodeStreamEvent{
+		Type: "message.part.updated",
+		Properties: map[string]any{
+			"part": map[string]any{
+				"id":        "reason-1",
+				"type":      "reasoning",
+				"text":      "private reasoning",
+				"sessionID": "session-123",
+			},
+		},
+	}))
+	require.True(t, state.apply(openCodeStreamEvent{
+		Type: "message.part.updated",
+		Properties: map[string]any{
+			"part": map[string]any{
+				"id":        "tool-1",
+				"type":      "tool",
+				"tool":      "read",
+				"sessionID": "session-123",
+				"state": map[string]any{
+					"status": "running",
+					"title":  "Read file",
+				},
+			},
+		},
+	}))
+
+	view := state.view()
+	require.Equal(t, "Final answer", view.Text)
+	require.Equal(t, "private reasoning", view.Reasoning)
+	require.Equal(t, "Running Read file", view.ToolStatus)
+}
+
+func TestOpenCodeStreamStateHandlesSimpleMessageEvents(t *testing.T) {
+	state := &openCodeStreamState{}
+
+	require.True(t, state.apply(openCodeStreamEvent{Event: "message_start", Data: map[string]any{"id": "msg_123"}}))
+	require.True(t, state.apply(openCodeStreamEvent{Event: "message_delta", Data: map[string]any{"delta": "안녕"}}))
+	require.True(t, state.apply(openCodeStreamEvent{Event: "message_delta", Data: map[string]any{"delta": "하세요"}}))
+	require.True(t, state.apply(openCodeStreamEvent{Event: "message_end", Data: map[string]any{"content": "안녕하세요"}}))
+
+	view := state.view()
+	require.Equal(t, "안녕하세요", view.Text)
+	require.True(t, state.completed)
+}
+
+func TestOpenCodeStreamStateSplitsThinkTags(t *testing.T) {
+	state := &openCodeStreamState{}
+
+	require.True(t, state.apply(openCodeStreamEvent{
+		Type: "message.part.updated",
+		Properties: map[string]any{
+			"part": map[string]any{
+				"type": "text",
+				"text": "<think>hidden reasoning</think>\n\nvisible answer",
+			},
+		},
+	}))
+
+	view := state.view()
+	require.Equal(t, "visible answer", view.Text)
+	require.Equal(t, "hidden reasoning", view.Reasoning)
+}
+
 func TestExtractOpenCodeMessageText(t *testing.T) {
 	parts := []map[string]any{
 		{"type": "tool-input", "text": "ignore"},
+		{"type": "reasoning", "text": "ignore reasoning"},
 		{"type": "text", "text": "Hello from OpenCode"},
 	}
 	require.Equal(t, "Hello from OpenCode", extractOpenCodeMessageText(parts))
+}
+
+func TestExtractOpenCodeMessageTextStripsThinkTags(t *testing.T) {
+	parts := []map[string]any{
+		{"type": "text", "text": "<think>hidden</think>\n\nvisible"},
+		{"type": "tool", "state": map[string]any{"output": "tool output"}},
+	}
+	require.Equal(t, "visible", extractOpenCodeMessageText(parts))
 }
 
 func TestEventBelongsToSessionFromNestedProperties(t *testing.T) {

@@ -57,6 +57,8 @@ type streamingPostUpdater struct {
 	modelID       string
 	interval      time.Duration
 	lastRendered  string
+	lastReasoning string
+	lastToolState string
 	lastUpdateAt  time.Time
 	started       bool
 	finished      bool
@@ -789,6 +791,8 @@ func (p *Plugin) createStreamingPost(channel *model.Channel, rootID string, acco
 			"opencode_streaming":          "true",
 			"opencode_stream_status":      "streaming",
 			"opencode_stream_placeholder": "true",
+			"opencode_reasoning":          "",
+			"opencode_tool_status":        "",
 		},
 	})
 	if appErr != nil {
@@ -797,7 +801,7 @@ func (p *Plugin) createStreamingPost(channel *model.Channel, rootID string, acco
 	return post, nil
 }
 
-func (u *streamingPostUpdater) update(content string, final bool) {
+func (u *streamingPostUpdater) update(view openCodeStreamView, final bool) {
 	if u == nil || u.post == nil {
 		return
 	}
@@ -805,26 +809,27 @@ func (u *streamingPostUpdater) update(content string, final bool) {
 	if !final && u.interval > 0 && !u.lastUpdateAt.IsZero() && time.Since(u.lastUpdateAt) < u.interval {
 		return
 	}
-	if _, err := u.render(content, final, executionFailureView{}); err != nil {
+	if _, err := u.render(view, final, executionFailureView{}); err != nil {
 		u.plugin.API.LogError("Failed to update OpenCode streaming post", "error", err, "correlation_id", u.correlationID)
 	}
 }
 
 func (u *streamingPostUpdater) complete(content string) (*model.Post, error) {
-	return u.render(content, true, executionFailureView{})
+	return u.render(openCodeStreamView{Text: content}, true, executionFailureView{})
 }
 
 func (u *streamingPostUpdater) fail(failure executionFailureView) error {
-	_, err := u.render("", false, failure)
+	_, err := u.render(openCodeStreamView{}, false, failure)
 	return err
 }
 
-func (u *streamingPostUpdater) render(content string, completed bool, failure executionFailureView) (*model.Post, error) {
+func (u *streamingPostUpdater) render(view openCodeStreamView, completed bool, failure executionFailureView) (*model.Post, error) {
 	if u == nil || u.post == nil {
 		return nil, fmt.Errorf("streaming post is not initialized")
 	}
 	u.start()
 
+	content := view.Text
 	previewMessage := buildBotStreamingMessage(content)
 	message := buildBotResponseMessage(content, u.correlationID, !failure.HasFailure && !completed)
 	if failure.HasFailure {
@@ -833,14 +838,18 @@ func (u *streamingPostUpdater) render(content string, completed bool, failure ex
 	if !completed && !failure.HasFailure {
 		message = previewMessage
 	}
-	if message == u.lastRendered {
+	reasoning := strings.TrimSpace(view.Reasoning)
+	toolStatus := strings.TrimSpace(view.ToolStatus)
+	if message == u.lastRendered && reasoning == u.lastReasoning && toolStatus == u.lastToolState {
 		return u.post, nil
 	}
 
 	if !completed && !failure.HasFailure {
 		u.post.Message = message
-		u.sendUpdateEvent(message)
+		u.sendUpdateEvent(message, reasoning, toolStatus)
 		u.lastRendered = message
+		u.lastReasoning = reasoning
+		u.lastToolState = toolStatus
 		u.lastUpdateAt = time.Now()
 		return u.post, nil
 	}
@@ -862,10 +871,14 @@ func (u *streamingPostUpdater) render(content string, completed bool, failure ex
 		updatedPost.Props["opencode_stream_status"] = "completed"
 		updatedPost.Props["opencode_streaming"] = "false"
 		updatedPost.Props["opencode_stream_placeholder"] = "false"
+		updatedPost.Props["opencode_reasoning"] = ""
+		updatedPost.Props["opencode_tool_status"] = ""
 	} else {
 		updatedPost.Props["opencode_stream_status"] = "streaming"
 		updatedPost.Props["opencode_streaming"] = "true"
 		updatedPost.Props["opencode_stream_placeholder"] = "false"
+		updatedPost.Props["opencode_reasoning"] = reasoning
+		updatedPost.Props["opencode_tool_status"] = toolStatus
 	}
 
 	post, appErr := u.plugin.API.UpdatePost(&updatedPost)
@@ -874,10 +887,12 @@ func (u *streamingPostUpdater) render(content string, completed bool, failure ex
 	}
 
 	if failure.HasFailure {
-		u.sendUpdateEvent(message)
+		u.sendUpdateEvent(message, "", "")
 	}
 	u.post = post
 	u.lastRendered = message
+	u.lastReasoning = reasoning
+	u.lastToolState = toolStatus
 	u.lastUpdateAt = time.Now()
 	return post, nil
 }
@@ -898,13 +913,15 @@ func (u *streamingPostUpdater) finish() {
 	u.publishControlEvent(postStreamingControlEnd)
 }
 
-func (u *streamingPostUpdater) sendUpdateEvent(message string) {
+func (u *streamingPostUpdater) sendUpdateEvent(message, reasoning, toolStatus string) {
 	if u == nil || u.post == nil {
 		return
 	}
 	u.plugin.API.PublishWebSocketEvent("postupdate", map[string]any{
-		"post_id": u.post.Id,
-		"next":    message,
+		"post_id":     u.post.Id,
+		"next":        message,
+		"reasoning":   reasoning,
+		"tool_status": toolStatus,
 	}, &model.WebsocketBroadcast{ChannelId: u.post.ChannelId})
 }
 

@@ -59,4 +59,4 @@ formatters:
           replacement: any
     goimports:
       local-prefixes:
-        - github.com/mattermost-community/mattermost-langflow-plugin
+        - github.com/mattermost-community/mattermost-ocs-plugin

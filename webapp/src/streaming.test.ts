@@ -61,11 +61,35 @@ test('buildStreamingPostUpdate updates only streaming OpenCode posts', () => {
     const updatedPost = buildStreamingPostUpdate(makeState(post), {
         post_id: post.id,
         next: 'streamed reply',
+        reasoning: 'thinking through it',
+        tool_status: 'Running read',
     });
 
     expect(updatedPost).toBeTruthy();
     expect(updatedPost?.message).toBe('streamed reply');
     expect(updatedPost?.props?.opencode_stream_status).toBe('streaming');
+    expect(updatedPost?.props?.opencode_reasoning).toBe('thinking through it');
+    expect(updatedPost?.props?.opencode_tool_status).toBe('Running read');
+});
+
+test('buildStreamingPostUpdate can update reasoning without changing text', () => {
+    const post = makePost({
+        props: {
+            opencode_stream: 'true',
+            opencode_streaming: 'true',
+            opencode_reasoning: '',
+            opencode_tool_status: '',
+        },
+    });
+
+    const updatedPost = buildStreamingPostUpdate(makeState(post), {
+        post_id: post.id,
+        reasoning: 'reasoning chunk',
+    });
+
+    expect(updatedPost).toBeTruthy();
+    expect(updatedPost?.message).toBe('initial');
+    expect(updatedPost?.props?.opencode_reasoning).toBe('reasoning chunk');
 });
 
 test('buildStreamingPostUpdate ignores non-streaming posts', () => {

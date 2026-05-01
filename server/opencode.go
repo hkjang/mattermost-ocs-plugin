@@ -105,6 +105,22 @@ type openCodeStreamEvent struct {
 
 type openCodeStreamParser struct{}
 
+type openCodeStreamView struct {
+	Text       string
+	Reasoning  string
+	ToolStatus string
+}
+
+type openCodeStreamState struct {
+	rawText     string
+	reasoning   string
+	toolStatus  string
+	completed   bool
+	messageID   string
+	partKinds   map[string]string
+	acceptedAny bool
+}
+
 type serviceCallError struct {
 	Code       string
 	Summary    string
@@ -212,9 +228,6 @@ func (p *Plugin) invokeOpenCode(
 	}
 
 	output := extractOpenCodeMessageText(envelope.Parts)
-	if output == "" {
-		output = extractStructuredTextFromValue(envelope)
-	}
 	output = truncateString(output, cfg.MaxOutputLength)
 	if output == "" {
 		return "", response.StatusCode, newServiceCallError(
@@ -236,7 +249,7 @@ func (p *Plugin) invokeOpenCodeStream(
 	cfg *runtimeConfiguration,
 	sessionID string,
 	request openCodeMessageRequest,
-	onUpdate func(string, bool),
+	onUpdate func(openCodeStreamView, bool),
 ) (string, int, error) {
 	streamRequest, err := p.newOpenCodeRequest(ctx, cfg, http.MethodGet, []string{"event"}, nil, "text/event-stream")
 	if err != nil {
@@ -312,20 +325,21 @@ func (p *Plugin) invokeOpenCodeStream(
 	timer := time.NewTimer(idleWindow)
 	defer timer.Stop()
 
-	currentOutput := ""
+	streamState := &openCodeStreamState{}
 	for {
 		select {
 		case item, ok := <-items:
 			if !ok {
-				if currentOutput != "" {
+				finalView := streamState.view()
+				if finalView.Text != "" {
 					if latest, latestErr := p.getLatestOpenCodeReply(ctx, cfg, sessionID); latestErr == nil && latest != "" {
-						currentOutput = mergeOpenCodeStreamOutput(currentOutput, latest)
+						finalView.Text = mergeOpenCodeStreamOutput(finalView.Text, latest)
 					}
-					currentOutput = truncateString(currentOutput, cfg.MaxOutputLength)
+					finalView.Text = truncateString(finalView.Text, cfg.MaxOutputLength)
 					if onUpdate != nil {
-						onUpdate(currentOutput, true)
+						onUpdate(finalView, true)
 					}
-					return currentOutput, statusCode, nil
+					return finalView.Text, statusCode, nil
 				}
 				return "", statusCode, newServiceCallError(
 					"stream_closed",
@@ -338,12 +352,13 @@ func (p *Plugin) invokeOpenCodeStream(
 				)
 			}
 			if item.err != nil {
-				if currentOutput != "" {
-					currentOutput = truncateString(currentOutput, cfg.MaxOutputLength)
+				finalView := streamState.view()
+				if finalView.Text != "" {
+					finalView.Text = truncateString(finalView.Text, cfg.MaxOutputLength)
 					if onUpdate != nil {
-						onUpdate(currentOutput, true)
+						onUpdate(finalView, true)
 					}
-					return currentOutput, statusCode, nil
+					return finalView.Text, statusCode, nil
 				}
 				return "", statusCode, newServiceCallError(
 					"stream_parse_failed",
@@ -367,42 +382,44 @@ func (p *Plugin) invokeOpenCodeStream(
 			}
 			timer.Reset(idleWindow)
 
-			update, completed := extractOpenCodeStreamText(*item.event)
-			if update == "" {
+			if !streamState.apply(*item.event) {
 				continue
 			}
 
-			currentOutput = truncateString(mergeOpenCodeStreamOutput(currentOutput, update), cfg.MaxOutputLength)
-			if onUpdate != nil && currentOutput != "" {
-				onUpdate(currentOutput, false)
+			view := streamState.view()
+			view.Text = truncateString(view.Text, cfg.MaxOutputLength)
+			if onUpdate != nil && (view.Text != "" || view.Reasoning != "" || view.ToolStatus != "") {
+				onUpdate(view, false)
 			}
-			if completed {
+			if streamState.completed {
 				if latest, latestErr := p.getLatestOpenCodeReply(ctx, cfg, sessionID); latestErr == nil && latest != "" {
-					currentOutput = truncateString(mergeOpenCodeStreamOutput(currentOutput, latest), cfg.MaxOutputLength)
+					view.Text = truncateString(mergeOpenCodeStreamOutput(view.Text, latest), cfg.MaxOutputLength)
 				}
-				if onUpdate != nil && currentOutput != "" {
-					onUpdate(currentOutput, true)
+				if onUpdate != nil && view.Text != "" {
+					onUpdate(view, true)
 				}
-				return currentOutput, statusCode, nil
+				return view.Text, statusCode, nil
 			}
 		case <-timer.C:
-			if currentOutput != "" {
+			finalView := streamState.view()
+			if finalView.Text != "" {
 				if latest, latestErr := p.getLatestOpenCodeReply(ctx, cfg, sessionID); latestErr == nil && latest != "" {
-					currentOutput = truncateString(mergeOpenCodeStreamOutput(currentOutput, latest), cfg.MaxOutputLength)
+					finalView.Text = truncateString(mergeOpenCodeStreamOutput(finalView.Text, latest), cfg.MaxOutputLength)
 				}
 				if onUpdate != nil {
-					onUpdate(currentOutput, true)
+					onUpdate(finalView, true)
 				}
-				return currentOutput, statusCode, nil
+				return finalView.Text, statusCode, nil
 			}
 			timer.Reset(idleWindow)
 		case <-ctx.Done():
-			if currentOutput != "" {
-				currentOutput = truncateString(currentOutput, cfg.MaxOutputLength)
+			finalView := streamState.view()
+			if finalView.Text != "" {
+				finalView.Text = truncateString(finalView.Text, cfg.MaxOutputLength)
 				if onUpdate != nil {
-					onUpdate(currentOutput, true)
+					onUpdate(finalView, true)
 				}
-				return currentOutput, statusCode, nil
+				return finalView.Text, statusCode, nil
 			}
 			return "", statusCode, classifyRequestError(serviceLabel, asyncRequest.URL.String(), ctx.Err())
 		}
@@ -996,67 +1013,398 @@ func containsStringValue(value any, needle string) bool {
 }
 
 func extractOpenCodeStreamText(event openCodeStreamEvent) (string, bool) {
-	eventType := strings.ToLower(strings.TrimSpace(defaultIfEmpty(event.Type, event.Event)))
-	completed := strings.Contains(eventType, "finish") || strings.Contains(eventType, "completed")
+	state := &openCodeStreamState{}
+	state.apply(event)
+	view := state.view()
+	return view.Text, state.completed
+}
 
-	for _, candidate := range []any{event.Data, event.Payload, event.Properties} {
-		if parts := collectParts(candidate); len(parts) > 0 {
-			if text := extractOpenCodeMessageText(parts); text != "" {
-				if partsIndicateCompletion(parts) {
-					completed = true
-				}
-				return text, completed
-			}
+func (s *openCodeStreamState) apply(event openCodeStreamEvent) bool {
+	if s == nil {
+		return false
+	}
+	if nested, ok := nestedOpenCodeEvent(event); ok {
+		return s.apply(nested)
+	}
+
+	eventType := strings.ToLower(strings.TrimSpace(defaultIfEmpty(event.Type, event.Event)))
+	changed := false
+
+	switch eventType {
+	case "server.connected":
+		return false
+	case "message_start":
+		s.acceptedAny = true
+		return true
+	case "message_delta":
+		if text, reasoning := extractSimpleMessageDelta(event.Data); text != "" || reasoning != "" {
+			changed = s.mergeTextDelta(text) || changed
+			changed = s.mergeReasoningDelta(reasoning) || changed
+		}
+	case "message_end", "message_stop":
+		if content := firstStringFromMap(event.Data, "content", "text", "message", "output"); content != "" {
+			changed = s.mergeTextSnapshot(content) || changed
+		}
+		s.completed = true
+		changed = true
+	case "content_block_delta":
+		text, reasoning, tool := extractContentBlockDelta(event.Data)
+		changed = s.mergeTextDelta(text) || changed
+		changed = s.mergeReasoningDelta(reasoning) || changed
+		changed = s.mergeToolStatus(tool) || changed
+	case "content_block_start":
+		if tool := summarizeContentBlockStart(event.Data); tool != "" {
+			changed = s.mergeToolStatus(tool) || changed
+		}
+	case "content_block_stop":
+		return false
+	}
+
+	if strings.Contains(eventType, "finish") || strings.Contains(eventType, "completed") || strings.Contains(eventType, "text-end") {
+		s.completed = true
+		changed = true
+	}
+
+	properties := mapFromAny(event.Properties)
+	if len(properties) == 0 {
+		properties = mapFromAny(event.Data)
+	}
+
+	if part := mapFromAny(properties["part"]); len(part) > 0 {
+		changed = s.applyPart(part, rawStringifyValue(properties["delta"])) || changed
+	}
+
+	if eventType == "message.part.delta" {
+		changed = s.applyPartDelta(properties) || changed
+	}
+
+	if info := mapFromAny(properties["info"]); len(info) > 0 {
+		if messageID := stringifyValue(info["id"]); messageID != "" {
+			s.messageID = messageID
+		}
+		if strings.EqualFold(stringifyValue(info["role"]), "assistant") && messageInfoIndicatesCompletion(info) {
+			s.completed = true
+			changed = true
 		}
 	}
 
-	partLike := collectPartLikeMaps(event.Data)
-	partLike = append(partLike, collectPartLikeMaps(event.Payload)...)
-	partLike = append(partLike, collectPartLikeMaps(event.Properties)...)
+	if strings.EqualFold(eventType, "session.idle") || strings.EqualFold(eventType, "session.error") || strings.EqualFold(eventType, "session.turn.close") {
+		s.completed = true
+		changed = true
+	}
 
-	snapshot := ""
-	delta := ""
-	for _, part := range partLike {
-		partType := strings.ToLower(stringifyValue(part["type"]))
-		if partType == "" {
+	for _, part := range collectParts(event.Data) {
+		changed = s.applyPart(part, "") || changed
+	}
+	for _, part := range collectParts(event.Payload) {
+		changed = s.applyPart(part, "") || changed
+	}
+
+	if changed {
+		s.acceptedAny = true
+	}
+	return changed
+}
+
+func nestedOpenCodeEvent(event openCodeStreamEvent) (openCodeStreamEvent, bool) {
+	if strings.TrimSpace(event.Type) != "" || strings.TrimSpace(event.Event) != "" {
+		return openCodeStreamEvent{}, false
+	}
+	for _, candidate := range []any{event.Payload, event.Data} {
+		mapped := mapFromAny(candidate)
+		if len(mapped) == 0 {
 			continue
 		}
-		if strings.Contains(partType, "tool") || strings.Contains(partType, "permission") || strings.Contains(partType, "step") {
+		nestedType := stringifyValue(mapped["type"])
+		nestedEvent := stringifyValue(mapped["event"])
+		if nestedType == "" && nestedEvent == "" {
 			continue
 		}
-		if strings.Contains(partType, "finish") || strings.Contains(partType, "text-end") {
-			completed = true
+		return openCodeStreamEvent{
+			Type:       nestedType,
+			Event:      nestedEvent,
+			Data:       mapped["data"],
+			Payload:    mapped["payload"],
+			Properties: mapFromAny(mapped["properties"]),
+		}, true
+	}
+	return openCodeStreamEvent{}, false
+}
+
+func (s *openCodeStreamState) applyPart(part map[string]any, explicitDelta string) bool {
+	if s == nil || len(part) == 0 {
+		return false
+	}
+
+	partType := strings.ToLower(stringifyValue(part["type"]))
+	if messageID := stringifyValue(part["messageID"]); messageID != "" {
+		s.messageID = messageID
+	}
+	if partID := firstNonEmptyString(stringifyValue(part["id"]), stringifyValue(part["partID"])); partID != "" && partType != "" {
+		if s.partKinds == nil {
+			s.partKinds = map[string]string{}
 		}
-		text := firstNonEmptyString(
-			stringifyValue(part["text"]),
-			stringifyValue(part["delta"]),
-			stringifyValue(part["content"]),
-			stringifyValue(part["message"]),
-			stringifyValue(part["output"]),
-		)
-		if text == "" {
-			text = extractStructuredTextFromValue(part)
-		}
-		if text == "" {
-			continue
-		}
-		if strings.Contains(partType, "delta") {
-			delta += text
-			continue
-		}
-		if len(text) > len(snapshot) {
-			snapshot = text
-		}
+		s.partKinds[partID] = partType
 	}
 
 	switch {
-	case snapshot != "":
-		return snapshot, completed
-	case delta != "":
-		return delta, completed
+	case partType == "text" || strings.Contains(partType, "text-delta"):
+		snapshot := firstNonEmptyRawString(rawStringifyValue(part["text"]), rawStringifyValue(part["content"]))
+		if snapshot != "" {
+			return s.mergeTextSnapshot(snapshot)
+		}
+		return s.mergeTextDelta(firstNonEmptyRawString(explicitDelta, rawStringifyValue(part["delta"])))
+	case partType == "reasoning" || strings.Contains(partType, "thinking") || strings.Contains(partType, "reasoning"):
+		snapshot := firstNonEmptyRawString(rawStringifyValue(part["text"]), rawStringifyValue(part["content"]), rawStringifyValue(part["summary"]))
+		if snapshot != "" {
+			return s.mergeReasoningSnapshot(snapshot)
+		}
+		return s.mergeReasoningDelta(firstNonEmptyRawString(explicitDelta, rawStringifyValue(part["delta"])))
+	case partType == "tool":
+		return s.mergeToolStatus(summarizeToolPart(part))
+	case strings.Contains(partType, "tool") || strings.Contains(partType, "permission"):
+		return s.mergeToolStatus(summarizeToolPart(part))
+	case partType == "step-finish" || partType == "step-start" || partType == "snapshot" || partType == "patch" || partType == "agent":
+		return false
 	default:
-		return "", completed
+		return false
 	}
+}
+
+func (s *openCodeStreamState) applyPartDelta(properties map[string]any) bool {
+	if s == nil || len(properties) == 0 {
+		return false
+	}
+
+	delta := firstNonEmptyRawString(rawStringifyValue(properties["delta"]), rawStringifyValue(properties["text"]))
+	if strings.TrimSpace(delta) == "" {
+		return false
+	}
+
+	partType := strings.ToLower(firstNonEmptyString(stringifyValue(properties["partType"]), stringifyValue(properties["type"])))
+	if partType == "" && s.partKinds != nil {
+		partType = s.partKinds[firstNonEmptyString(stringifyValue(properties["partID"]), stringifyValue(properties["id"]))]
+	}
+
+	switch {
+	case strings.Contains(partType, "tool") || strings.Contains(partType, "permission"):
+		return false
+	case strings.Contains(partType, "reasoning") || strings.Contains(partType, "thinking"):
+		return s.mergeReasoningDelta(delta)
+	default:
+		return s.mergeTextDelta(delta)
+	}
+}
+
+func (s *openCodeStreamState) view() openCodeStreamView {
+	if s == nil {
+		return openCodeStreamView{}
+	}
+
+	assistantText, thinkReasoning, _ := splitThinkTaggedText(s.rawText)
+	reasoning := strings.TrimSpace(strings.Join(nonEmptyStrings(s.reasoning, thinkReasoning), "\n\n"))
+	return openCodeStreamView{
+		Text:       strings.TrimSpace(assistantText),
+		Reasoning:  reasoning,
+		ToolStatus: strings.TrimSpace(s.toolStatus),
+	}
+}
+
+func (s *openCodeStreamState) mergeTextDelta(text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	next := mergeOpenCodeStreamOutput(s.rawText, text)
+	if next == s.rawText {
+		return false
+	}
+	s.rawText = next
+	return true
+}
+
+func (s *openCodeStreamState) mergeTextSnapshot(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" || text == s.rawText {
+		return false
+	}
+	s.rawText = text
+	return true
+}
+
+func (s *openCodeStreamState) mergeReasoningDelta(text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	next := mergeOpenCodeStreamOutput(s.reasoning, text)
+	if next == s.reasoning {
+		return false
+	}
+	s.reasoning = next
+	return true
+}
+
+func (s *openCodeStreamState) mergeReasoningSnapshot(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" || text == s.reasoning {
+		return false
+	}
+	s.reasoning = text
+	return true
+}
+
+func (s *openCodeStreamState) mergeToolStatus(status string) bool {
+	status = strings.TrimSpace(status)
+	if status == "" || status == s.toolStatus {
+		return false
+	}
+	s.toolStatus = status
+	return true
+}
+
+func extractSimpleMessageDelta(value any) (string, string) {
+	mapped := mapFromAny(value)
+	if len(mapped) == 0 {
+		return stringifyValue(value), ""
+	}
+
+	delta := mapped["delta"]
+	switch typed := delta.(type) {
+	case map[string]any:
+		deltaType := strings.ToLower(stringifyValue(typed["type"]))
+		text := firstNonEmptyRawString(
+			rawStringifyValue(typed["text"]),
+			rawStringifyValue(typed["thinking"]),
+			rawStringifyValue(typed["content"]),
+			rawStringifyValue(typed["partial_json"]),
+		)
+		if strings.Contains(deltaType, "thinking") || strings.Contains(deltaType, "reasoning") {
+			return "", text
+		}
+		if strings.Contains(deltaType, "input_json") || strings.Contains(deltaType, "tool") {
+			return "", ""
+		}
+		return text, ""
+	case string:
+		return typed, ""
+	default:
+		return firstStringFromMap(mapped, "text", "content", "message"), ""
+	}
+}
+
+func extractContentBlockDelta(value any) (string, string, string) {
+	mapped := mapFromAny(value)
+	if len(mapped) == 0 {
+		return "", "", ""
+	}
+	delta := mapFromAny(mapped["delta"])
+	deltaType := strings.ToLower(stringifyValue(delta["type"]))
+	switch {
+	case strings.Contains(deltaType, "text"):
+		return rawStringifyValue(delta["text"]), "", ""
+	case strings.Contains(deltaType, "thinking") || strings.Contains(deltaType, "reasoning"):
+		return "", firstNonEmptyRawString(rawStringifyValue(delta["thinking"]), rawStringifyValue(delta["text"])), ""
+	case strings.Contains(deltaType, "input_json") || strings.Contains(deltaType, "tool"):
+		return "", "", "Using tool..."
+	default:
+		return "", "", ""
+	}
+}
+
+func summarizeContentBlockStart(value any) string {
+	mapped := mapFromAny(value)
+	block := mapFromAny(mapped["content_block"])
+	if len(block) == 0 {
+		return ""
+	}
+	if !strings.Contains(strings.ToLower(stringifyValue(block["type"])), "tool") {
+		return ""
+	}
+	name := firstNonEmptyString(stringifyValue(block["name"]), stringifyValue(block["tool"]))
+	if name == "" {
+		return "Using tool..."
+	}
+	return "Using tool: " + name
+}
+
+func summarizeToolPart(part map[string]any) string {
+	if len(part) == 0 {
+		return ""
+	}
+	toolName := firstNonEmptyString(stringifyValue(part["tool"]), stringifyValue(part["name"]), stringifyValue(part["title"]))
+	state := mapFromAny(part["state"])
+	status := strings.ToLower(firstNonEmptyString(stringifyValue(state["status"]), stringifyValue(part["status"])))
+	title := firstNonEmptyString(stringifyValue(state["title"]), stringifyValue(part["title"]))
+	if title != "" {
+		toolName = title
+	}
+	if toolName == "" {
+		toolName = "tool"
+	}
+
+	switch status {
+	case "pending":
+		return "Waiting to run " + toolName
+	case "running":
+		return "Running " + toolName
+	case "completed":
+		return "Completed " + toolName
+	case "error":
+		return "Tool failed: " + toolName
+	default:
+		return "Using " + toolName
+	}
+}
+
+func messageInfoIndicatesCompletion(info map[string]any) bool {
+	if len(info) == 0 {
+		return false
+	}
+	if stringifyValue(info["finish"]) != "" || stringifyValue(info["error"]) != "" {
+		return true
+	}
+	if timeInfo := mapFromAny(info["time"]); stringifyValue(timeInfo["completed"]) != "" {
+		return true
+	}
+	return false
+}
+
+func mapFromAny(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	case map[string]string:
+		mapped := make(map[string]any, len(typed))
+		for key, value := range typed {
+			mapped[key] = value
+		}
+		return mapped
+	default:
+		return nil
+	}
+}
+
+func firstStringFromMap(value any, keys ...string) string {
+	mapped := mapFromAny(value)
+	if len(mapped) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		if text := stringifyValue(mapped[key]); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func nonEmptyStrings(values ...string) []string {
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
 }
 
 func collectParts(value any) []map[string]any {
@@ -1065,6 +1413,11 @@ func collectParts(value any) []map[string]any {
 		if rawParts, ok := typed["parts"]; ok {
 			return collectParts(rawParts)
 		}
+		parts := []map[string]any{}
+		for _, nested := range typed {
+			parts = append(parts, collectParts(nested)...)
+		}
+		return parts
 	case []any:
 		parts := make([]map[string]any, 0, len(typed))
 		for _, item := range typed {
@@ -1117,7 +1470,7 @@ func extractOpenCodeMessageText(parts []map[string]any) string {
 
 	for _, part := range parts {
 		partType := strings.ToLower(stringifyValue(part["type"]))
-		if strings.Contains(partType, "tool") || strings.Contains(partType, "permission") || strings.Contains(partType, "step") {
+		if !isAssistantTextPart(partType, part) {
 			continue
 		}
 
@@ -1144,12 +1497,34 @@ func extractOpenCodeMessageText(parts []map[string]any) string {
 
 	switch {
 	case snapshot != "":
-		return strings.TrimSpace(snapshot)
+		assistantText, _, _ := splitThinkTaggedText(snapshot)
+		return strings.TrimSpace(assistantText)
 	case builder.Len() > 0:
-		return strings.TrimSpace(builder.String())
+		assistantText, _, _ := splitThinkTaggedText(builder.String())
+		return strings.TrimSpace(assistantText)
 	default:
 		return ""
 	}
+}
+
+func isAssistantTextPart(partType string, part map[string]any) bool {
+	partType = strings.ToLower(strings.TrimSpace(partType))
+	if strings.Contains(partType, "tool") ||
+		strings.Contains(partType, "permission") ||
+		strings.Contains(partType, "step") ||
+		strings.Contains(partType, "reasoning") ||
+		strings.Contains(partType, "thinking") ||
+		strings.Contains(partType, "snapshot") ||
+		strings.Contains(partType, "patch") ||
+		strings.Contains(partType, "agent") ||
+		strings.Contains(partType, "retry") ||
+		strings.Contains(partType, "compaction") {
+		return false
+	}
+	if partType == "" {
+		return firstNonEmptyString(stringifyValue(part["text"]), stringifyValue(part["content"])) != ""
+	}
+	return partType == "text" || strings.Contains(partType, "text-delta")
 }
 
 func extractLatestAssistantText(messages []openCodeMessageEnvelope) string {
@@ -1184,6 +1559,67 @@ func mergeOpenCodeStreamOutput(current, next string) string {
 	default:
 		return current + next
 	}
+}
+
+func splitThinkTaggedText(value string) (string, string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", "", false
+	}
+
+	lower := strings.ToLower(value)
+	cursor := 0
+	thinkOpen := false
+	responseParts := []string{}
+	reasoningParts := []string{}
+
+	for cursor < len(value) {
+		openIndex := strings.Index(lower[cursor:], "<think>")
+		closeIndex := strings.Index(lower[cursor:], "</think>")
+
+		nextIndex := -1
+		tagLength := 0
+		openTag := false
+		switch {
+		case openIndex >= 0 && (closeIndex < 0 || openIndex < closeIndex):
+			nextIndex = cursor + openIndex
+			tagLength = len("<think>")
+			openTag = true
+		case closeIndex >= 0:
+			nextIndex = cursor + closeIndex
+			tagLength = len("</think>")
+		default:
+			chunk := value[cursor:]
+			if thinkOpen {
+				reasoningParts = append(reasoningParts, chunk)
+			} else {
+				responseParts = append(responseParts, chunk)
+			}
+			cursor = len(value)
+			continue
+		}
+
+		chunk := value[cursor:nextIndex]
+		if thinkOpen {
+			reasoningParts = append(reasoningParts, chunk)
+		} else {
+			responseParts = append(responseParts, chunk)
+		}
+		thinkOpen = openTag
+		cursor = nextIndex + tagLength
+	}
+
+	return normalizeOpenCodeVisibleText(strings.Join(responseParts, "")),
+		normalizeOpenCodeVisibleText(strings.Join(reasoningParts, "\n\n")),
+		thinkOpen
+}
+
+func normalizeOpenCodeVisibleText(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	for strings.Contains(value, "\n\n\n") {
+		value = strings.ReplaceAll(value, "\n\n\n", "\n\n")
+	}
+	return strings.TrimSpace(value)
 }
 
 func extractStructuredTextFromValue(value any) string {
@@ -1394,6 +1830,15 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
+func firstNonEmptyRawString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func stringifyValue(value any) string {
 	switch typed := value.(type) {
 	case string:
@@ -1402,6 +1847,17 @@ func stringifyValue(value any) string {
 		return ""
 	default:
 		return strings.TrimSpace(fmt.Sprint(typed))
+	}
+}
+
+func rawStringifyValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(typed)
 	}
 }
 

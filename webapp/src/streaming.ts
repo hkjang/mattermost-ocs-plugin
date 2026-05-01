@@ -12,6 +12,8 @@ type StreamingPostUpdateEventData = {
     post_id?: string;
     next?: string;
     control?: string;
+    reasoning?: string;
+    tool_status?: string;
 };
 
 export type {StreamingPostUpdateEventData};
@@ -40,13 +42,23 @@ export function isOpenCodeAwaitingFirstChunk(post?: Post | null) {
 
 export function buildStreamingPostUpdate(state: GlobalState, data?: StreamingPostUpdateEventData): Post | null {
     const postID = normalizeIdentifier(data?.post_id);
-    const nextMessage = typeof data?.next === 'string' ? data.next : '';
-    if (!postID || nextMessage.trim() === '') {
+    if (!postID) {
         return null;
     }
 
     const existingPost = state.entities.posts.posts[postID];
-    if (!isOpenCodeStreamingPost(existingPost) || existingPost.message === nextMessage) {
+    if (!isOpenCodeStreamingPost(existingPost)) {
+        return null;
+    }
+
+    const hasNextMessage = typeof data?.next === 'string' && data.next.trim() !== '';
+    const nextMessage = hasNextMessage ? data?.next || '' : existingPost.message;
+    const nextReasoning = typeof data?.reasoning === 'string' ? data.reasoning : existingPost.props?.opencode_reasoning;
+    const nextToolStatus = typeof data?.tool_status === 'string' ? data.tool_status : existingPost.props?.opencode_tool_status;
+    const messageChanged = existingPost.message !== nextMessage;
+    const reasoningChanged = existingPost.props?.opencode_reasoning !== nextReasoning;
+    const toolStatusChanged = existingPost.props?.opencode_tool_status !== nextToolStatus;
+    if (!messageChanged && !reasoningChanged && !toolStatusChanged) {
         return null;
     }
 
@@ -60,6 +72,8 @@ export function buildStreamingPostUpdate(state: GlobalState, data?: StreamingPos
             opencode_streaming: 'true',
             opencode_stream_status: 'streaming',
             opencode_stream_placeholder: 'false',
+            opencode_reasoning: nextReasoning || '',
+            opencode_tool_status: nextToolStatus || '',
         },
     };
 }
