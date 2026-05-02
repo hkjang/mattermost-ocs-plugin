@@ -350,20 +350,41 @@ func (p *Plugin) invokeOpenCodeStream(
 	// session.idle races ahead of the trailing message.part.updated event.
 	finalize := func(refresh bool) string {
 		if refresh {
-			if latest, err := p.getLatestOpenCodeReply(ctx, cfg, sessionID); err == nil {
-				latestTrim := strings.TrimSpace(latest)
-				if latestTrim != "" && len(latestTrim) >= len(strings.TrimSpace(streamState.rawText)) {
-					streamState.mergeTextSnapshot(latest)
-				}
+			latest, err := p.getLatestOpenCodeReply(ctx, cfg, sessionID)
+			latestTrim := strings.TrimSpace(latest)
+			currentLen := len(strings.TrimSpace(streamState.rawText))
+			p.API.LogInfo("[OCS-DEBUG] finalize REST fetch", "session_id", sessionID, "err", fmt.Sprintf("%v", err), "latest_len", len(latestTrim), "current_text_len", currentLen, "tool_blocks", len(streamState.Tools))
+			if err == nil && latestTrim != "" && len(latestTrim) >= currentLen {
+				streamState.mergeTextSnapshot(latest)
 			}
 		}
 		finalView := streamState.view()
 		finalView.Text = truncateString(finalView.Text, cfg.MaxOutputLength)
+		p.API.LogInfo("[OCS-DEBUG] finalize publish", "session_id", sessionID, "view_text_len", len(finalView.Text), "tool_blocks", len(streamState.Tools), "raw_text_len", len(streamState.rawText))
 		if onUpdate != nil && finalView.Text != "" {
 			onUpdate(finalView, true)
 		}
 		return finalView.Text
 	}
+
+	// Once OpenCode marks the session as idle/finished we keep listening for
+	// a short grace period so trailing message.part.updated events for the
+	// final assistant text can land before we finalize. Without this, replies
+	// after a tool call sometimes vanish because session.idle races ahead of
+	// the closing text part.
+	const completionGracePeriod = 1500 * time.Millisecond
+	var completionTimer *time.Timer
+	completionFired := func() <-chan time.Time {
+		if completionTimer == nil {
+			return nil
+		}
+		return completionTimer.C
+	}
+	defer func() {
+		if completionTimer != nil {
+			completionTimer.Stop()
+		}
+	}()
 
 	for {
 		select {
@@ -418,12 +439,18 @@ func (p *Plugin) invokeOpenCodeStream(
 				onUpdate(view, false)
 			}
 			if streamState.completed {
-				p.API.LogInfo("[OCS-DEBUG] Stream completed", "event_type", item.event.Type, "event_event", item.event.Event, "text_len", len(view.Text), "error", streamState.sessionError)
 				if streamState.sessionError != "" {
+					p.API.LogInfo("[OCS-DEBUG] Stream session error", "session_id", sessionID, "event_type", item.event.Type, "event_event", item.event.Event, "error", streamState.sessionError)
 					return "", statusCode, errors.New(streamState.sessionError)
 				}
-				return finalize(true), statusCode, nil
+				if completionTimer == nil {
+					p.API.LogInfo("[OCS-DEBUG] Stream completion detected, entering grace period", "session_id", sessionID, "event_type", item.event.Type, "event_event", item.event.Event, "text_len", len(view.Text), "tool_blocks", len(streamState.Tools), "grace_ms", completionGracePeriod.Milliseconds())
+					completionTimer = time.NewTimer(completionGracePeriod)
+				}
 			}
+		case <-completionFired():
+			p.API.LogInfo("[OCS-DEBUG] Stream completion grace expired", "session_id", sessionID)
+			return finalize(true), statusCode, nil
 		case <-timer.C:
 			if final := finalize(true); final != "" {
 				return final, statusCode, nil
@@ -560,11 +587,61 @@ func (p *Plugin) getLatestOpenCodeReply(ctx context.Context, cfg *runtimeConfigu
 		return "", classifyHTTPError(serviceLabel, request.URL.String(), response.StatusCode, response.Header, responseBody)
 	}
 
-	var envelopes []openCodeMessageEnvelope
-	if err := json.Unmarshal(responseBody, &envelopes); err != nil {
+	envelopes, err := decodeMessageListResponse(responseBody)
+	if err != nil {
 		return "", err
 	}
-	return extractLatestAssistantText(envelopes), nil
+	text := extractLatestAssistantText(envelopes)
+	p.API.LogDebug("[OCS-DEBUG] getLatestOpenCodeReply", "session_id", sessionID, "envelope_count", len(envelopes), "text_len", len(text))
+	return text, nil
+}
+
+// decodeMessageListResponse parses the body returned by GET
+// /session/{id}/message into our message envelope shape. OpenCode's stable
+// API returns a JSON array, but older / wrapped builds occasionally return an
+// object containing the array under a "messages", "data", or "items" key. We
+// try each shape so a working session reply is never silently dropped.
+func decodeMessageListResponse(body []byte) ([]openCodeMessageEnvelope, error) {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return nil, nil
+	}
+
+	if body[0] == '[' {
+		var envelopes []openCodeMessageEnvelope
+		if err := json.Unmarshal(body, &envelopes); err == nil {
+			return envelopes, nil
+		}
+	}
+
+	if body[0] == '{' {
+		var wrapper struct {
+			Messages []openCodeMessageEnvelope `json:"messages"`
+			Data     []openCodeMessageEnvelope `json:"data"`
+			Items    []openCodeMessageEnvelope `json:"items"`
+		}
+		if err := json.Unmarshal(body, &wrapper); err == nil {
+			switch {
+			case len(wrapper.Messages) > 0:
+				return wrapper.Messages, nil
+			case len(wrapper.Data) > 0:
+				return wrapper.Data, nil
+			case len(wrapper.Items) > 0:
+				return wrapper.Items, nil
+			}
+		}
+
+		var envelope openCodeMessageEnvelope
+		if err := json.Unmarshal(body, &envelope); err == nil && (len(envelope.Parts) > 0 || len(envelope.Info) > 0) {
+			return []openCodeMessageEnvelope{envelope}, nil
+		}
+	}
+
+	var envelopes []openCodeMessageEnvelope
+	if err := json.Unmarshal(body, &envelopes); err != nil {
+		return nil, err
+	}
+	return envelopes, nil
 }
 
 func (p *Plugin) testOpenCodeConnection(ctx context.Context, cfg *runtimeConfiguration) (*openCodeConnectionStatus, error) {
@@ -1173,17 +1250,28 @@ func (s *openCodeStreamState) applyPart(part map[string]any, explicitDelta strin
 
 	switch {
 	case partType == "text" || strings.Contains(partType, "text-delta"):
+		// Match the myagents handler: prefer the explicit delta when present
+		// (so streaming events that only carry the latest increment get
+		// appended) and fall back to the cumulative `part.text` snapshot.
+		// This avoids clobbering accumulated text with a stale partial when
+		// the server alternates between delta-only and snapshot events.
+		if delta := firstNonEmptyRawString(explicitDelta, rawStringifyValue(part["delta"])); strings.TrimSpace(delta) != "" {
+			return s.mergeTextDelta(delta)
+		}
 		snapshot := firstNonEmptyRawString(rawStringifyValue(part["text"]), rawStringifyValue(part["content"]))
 		if snapshot != "" {
 			return s.mergeTextSnapshot(snapshot)
 		}
-		return s.mergeTextDelta(firstNonEmptyRawString(explicitDelta, rawStringifyValue(part["delta"])))
+		return false
 	case partType == "reasoning" || strings.Contains(partType, "thinking") || strings.Contains(partType, "reasoning"):
+		if delta := firstNonEmptyRawString(explicitDelta, rawStringifyValue(part["delta"])); strings.TrimSpace(delta) != "" {
+			return s.mergeReasoningDelta(delta)
+		}
 		snapshot := firstNonEmptyRawString(rawStringifyValue(part["text"]), rawStringifyValue(part["content"]), rawStringifyValue(part["summary"]))
 		if snapshot != "" {
 			return s.mergeReasoningSnapshot(snapshot)
 		}
-		return s.mergeReasoningDelta(firstNonEmptyRawString(explicitDelta, rawStringifyValue(part["delta"])))
+		return false
 	case partType == "tool":
 		return rememberOpenCodeToolPart(s, partID, part)
 	case partType == "file":
