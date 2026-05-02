@@ -281,17 +281,38 @@ func buildOpenCodeMessageRequest(bot BotDefinition, prompt, agentID, modelID, me
 	request := openCodeMessageRequest{
 		MessageID: messageID,
 		Agent:     strings.TrimSpace(agentID),
-		Model:     strings.TrimSpace(modelID),
 		System:    strings.TrimSpace(bot.SystemPrompt),
 		Parts: []openCodePart{{
 			Type: "text",
 			Text: prompt,
 		}},
 	}
+	if model := buildOpenCodeModelSelector(modelID); model != nil {
+		request.Model = model
+	}
 	if tools := parseToolPolicy(bot.ToolPolicy); tools != nil {
 		request.Tools = tools
 	}
 	return request
+}
+
+func buildOpenCodeModelSelector(modelID string) *openCodeModelSelector {
+	modelID = strings.TrimSpace(modelID)
+	if modelID == "" {
+		return nil
+	}
+	provider, model, ok := strings.Cut(modelID, "/")
+	if !ok {
+		// Without a provider prefix we cannot satisfy OpenCode's required object
+		// shape, so omit the field and let the server fall back to its default.
+		return nil
+	}
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if provider == "" || model == "" {
+		return nil
+	}
+	return &openCodeModelSelector{ProviderID: provider, ModelID: model}
 }
 
 func resolveAgentID(cfg *runtimeConfiguration, bot BotDefinition) string {
@@ -315,33 +336,32 @@ func resolveModelID(cfg *runtimeConfiguration, bot BotDefinition) string {
 	return cfg.DefaultProviderID + "/" + modelID
 }
 
-func parseToolPolicy(raw string) any {
+func parseToolPolicy(raw string) map[string]bool {
 	value := strings.TrimSpace(raw)
 	switch strings.ToLower(value) {
 	case "", "inherit", "default":
 		return nil
 	case "none":
-		return []string{}
+		return map[string]bool{}
 	}
 
+	var names []string
 	if strings.HasPrefix(value, "[") {
-		var tools []string
-		if err := json.Unmarshal([]byte(value), &tools); err == nil {
-			return tools
+		_ = json.Unmarshal([]byte(value), &names)
+	}
+	if len(names) == 0 {
+		for _, part := range strings.Split(value, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				names = append(names, part)
+			}
 		}
 	}
-
-	parts := strings.Split(value, ",")
-	tools := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		tools = append(tools, part)
-	}
-	if len(tools) == 0 {
+	if len(names) == 0 {
 		return nil
+	}
+	tools := make(map[string]bool, len(names))
+	for _, name := range names {
+		tools[name] = true
 	}
 	return tools
 }

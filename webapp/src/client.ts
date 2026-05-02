@@ -110,6 +110,7 @@ export type PluginStatus = {
 };
 
 export type AdminPluginConfig = {
+    schema_version?: number;
     service: {
         base_url: string;
         username: string;

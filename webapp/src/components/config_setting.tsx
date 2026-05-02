@@ -740,6 +740,7 @@ function createDefaultCodingSettings(): Required<CodingBotSettings> {
 
 function buildStoredConfig(config: DraftPluginConfig): AdminPluginConfig {
     return {
+        schema_version: 2,
         service: {...config.service},
         runtime: {...config.runtime},
         opencode_defaults: {...config.opencode_defaults},

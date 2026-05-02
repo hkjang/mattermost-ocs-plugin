@@ -24,13 +24,18 @@ type openCodePart struct {
 }
 
 type openCodeMessageRequest struct {
-	MessageID string         `json:"messageID,omitempty"`
-	Model     string         `json:"model,omitempty"`
-	Agent     string         `json:"agent,omitempty"`
-	NoReply   bool           `json:"noReply,omitempty"`
-	System    string         `json:"system,omitempty"`
-	Tools     any            `json:"tools,omitempty"`
-	Parts     []openCodePart `json:"parts"`
+	MessageID string                 `json:"messageID,omitempty"`
+	Model     *openCodeModelSelector `json:"model,omitempty"`
+	Agent     string                 `json:"agent,omitempty"`
+	NoReply   bool                   `json:"noReply,omitempty"`
+	System    string                 `json:"system,omitempty"`
+	Tools     map[string]bool        `json:"tools,omitempty"`
+	Parts     []openCodePart         `json:"parts"`
+}
+
+type openCodeModelSelector struct {
+	ProviderID string `json:"providerID"`
+	ModelID    string `json:"modelID"`
 }
 
 type openCodeMessageEnvelope struct {

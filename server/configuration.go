@@ -25,12 +25,19 @@ type configuration struct {
 }
 
 type storedPluginConfig struct {
+	SchemaVersion    int                          `json:"schema_version"`
 	Service          storedServiceConfig          `json:"service"`
 	Runtime          storedRuntimeConfig          `json:"runtime"`
 	OpenCodeDefaults storedOpenCodeDefaults       `json:"opencode_defaults"`
 	SessionPolicy    storedSessionPolicy          `json:"session_policy"`
 	Bots             []BotDefinition              `json:"bots"`
 }
+
+const (
+	currentConfigSchemaVersion = 2
+	legacyConfigBackupKVKey    = "legacy_config_backup_v1"
+	legacyConfigResetKVKey     = "legacy_config_reset_v2_done"
+)
 
 type storedServiceConfig struct {
 	BaseURL    string `json:"base_url"`
@@ -156,6 +163,7 @@ func parseStoredPluginConfig(raw string) (storedPluginConfig, error) {
 
 func defaultStoredPluginConfig() storedPluginConfig {
 	return storedPluginConfig{
+		SchemaVersion: currentConfigSchemaVersion,
 		Runtime: storedRuntimeConfig{
 			DefaultTimeoutSeconds: defaultTimeoutSeconds,
 			EnableStreaming:       true,
@@ -346,6 +354,16 @@ func (p *Plugin) OnConfigurationChange() error {
 		return fmt.Errorf("failed to load plugin configuration: %w", err)
 	}
 
+	if p.client != nil {
+		if cleared, err := p.resetLegacyConfigOnce(configuration); err != nil {
+			p.API.LogWarn("Failed to clear legacy OpenCode plugin config", "error", err.Error())
+		} else if cleared {
+			// Saving the cleared config will re-trigger this hook with the
+			// fresh values; let that pass handle the rest.
+			return nil
+		}
+	}
+
 	p.setConfiguration(configuration)
 
 	if p.client != nil {
@@ -355,4 +373,48 @@ func (p *Plugin) OnConfigurationChange() error {
 	}
 
 	return nil
+}
+
+// resetLegacyConfigOnce wipes the stored Config blob the first time the v2
+// schema runs, so admins start from a clean slate after the field/UI overhaul.
+// The previous Config is backed up to KV so it can be recovered if needed.
+func (p *Plugin) resetLegacyConfigOnce(cfg *configuration) (bool, error) {
+	if cfg == nil {
+		return false, nil
+	}
+	marker, _ := p.API.KVGet(legacyConfigResetKVKey)
+	if len(marker) > 0 {
+		return false, nil
+	}
+
+	raw := strings.TrimSpace(cfg.Config)
+	if raw == "" {
+		// Nothing to migrate — just record the marker so we never run again.
+		_ = p.API.KVSet(legacyConfigResetKVKey, []byte("1"))
+		return false, nil
+	}
+
+	var probe map[string]any
+	if err := json.Unmarshal([]byte(raw), &probe); err == nil {
+		if version, ok := probe["schema_version"].(float64); ok && int(version) >= currentConfigSchemaVersion {
+			_ = p.API.KVSet(legacyConfigResetKVKey, []byte("1"))
+			return false, nil
+		}
+	}
+
+	if appErr := p.API.KVSet(legacyConfigBackupKVKey, []byte(cfg.Config)); appErr != nil {
+		return false, fmt.Errorf("failed to back up legacy config: %w", appErr)
+	}
+
+	if appErr := p.API.SavePluginConfig(map[string]any{"Config": ""}); appErr != nil {
+		return false, fmt.Errorf("failed to clear legacy config: %w", appErr)
+	}
+
+	if appErr := p.API.KVSet(legacyConfigResetKVKey, []byte("1")); appErr != nil {
+		return false, fmt.Errorf("failed to record legacy config reset: %w", appErr)
+	}
+
+	cfg.Config = ""
+	p.API.LogInfo("Cleared legacy OpenCode plugin configuration; previous values backed up to KV.", "kv_key", legacyConfigBackupKVKey)
+	return true, nil
 }
