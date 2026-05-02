@@ -20,8 +20,8 @@ func TestParseBotDefinitions(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, bots, 2)
 	require.Equal(t, "support", bots[0].ID)
-	require.Equal(t, "support-agent", bots[0].DefaultAgent)
-	require.Equal(t, "anthropic/sonnet", bots[0].DefaultModel)
+	require.Empty(t, bots[0].DefaultAgent)
+	require.Empty(t, bots[0].DefaultModel)
 	require.Equal(t, "summary-bot", bots[1].ID)
 }
 
@@ -64,9 +64,9 @@ func TestConfigurationNormalizeFromConfig(t *testing.T) {
 	require.Equal(t, "https://opencode.example.com", runtimeCfg.OpenCodeBaseURL)
 	require.Equal(t, "opencode", runtimeCfg.OpenCodeUsername)
 	require.Equal(t, "secret", runtimeCfg.OpenCodePassword)
-	require.Equal(t, "anthropic", runtimeCfg.DefaultProviderID)
-	require.Equal(t, "claude-sonnet", runtimeCfg.DefaultModelID)
-	require.Equal(t, "default", runtimeCfg.DefaultAgentID)
+	require.Empty(t, runtimeCfg.DefaultProviderID)
+	require.Empty(t, runtimeCfg.DefaultModelID)
+	require.Empty(t, runtimeCfg.DefaultAgentID)
 	require.Equal(t, "thread", runtimeCfg.SessionReuseScope)
 	require.Equal(t, 30, int(runtimeCfg.SessionIdleExpire.Minutes()))
 	require.True(t, runtimeCfg.EnableStreaming)
@@ -164,9 +164,9 @@ func TestOpenCodeStreamStateSeparatesOfficialPartTypes(t *testing.T) {
 	}))
 
 	view := state.view()
-	require.Equal(t, "Final answer", view.Text)
+	require.Equal(t, "> 도구 호출: `read Read file (running)`\n\nFinal answer", view.Text)
 	require.Equal(t, "private reasoning", view.Reasoning)
-	require.Equal(t, "Running Read file", view.ToolStatus)
+	require.Empty(t, view.ToolStatus)
 }
 
 func TestOpenCodeStreamStateHandlesSimpleMessageEvents(t *testing.T) {

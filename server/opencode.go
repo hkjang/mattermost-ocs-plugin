@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -120,11 +121,16 @@ type openCodeStreamState struct {
 	rawText     string
 	reasoning   string
 	toolStatus  string
-	completed    bool
-	sessionError string
-	messageID    string
-	partKinds    map[string]string
-	acceptedAny  bool
+	completed       bool
+	sessionError    string
+	messageID       string
+	partKinds       map[string]string
+	acceptedAny     bool
+	Tools           []string
+	ToolPartIndexes map[string]int
+	ToolLabels      map[string]string
+	ToolInputs      map[string]string
+	ToolOutputs     map[string]string
 }
 
 type serviceCallError struct {
@@ -1161,7 +1167,8 @@ func (s *openCodeStreamState) applyPart(part map[string]any, explicitDelta strin
 	if messageID := stringifyValue(part["messageID"]); messageID != "" {
 		s.messageID = messageID
 	}
-	if partID := firstNonEmptyString(stringifyValue(part["id"]), stringifyValue(part["partID"])); partID != "" && partType != "" {
+	partID := firstNonEmptyString(stringifyValue(part["id"]), stringifyValue(part["partID"]))
+	if partID != "" && partType != "" {
 		if s.partKinds == nil {
 			s.partKinds = map[string]string{}
 		}
@@ -1182,9 +1189,11 @@ func (s *openCodeStreamState) applyPart(part map[string]any, explicitDelta strin
 		}
 		return s.mergeReasoningDelta(firstNonEmptyRawString(explicitDelta, rawStringifyValue(part["delta"])))
 	case partType == "tool":
-		return s.mergeToolStatus(summarizeToolPart(part))
+		return rememberOpenCodeToolPart(s, partID, part)
+	case partType == "file":
+		return rememberOpenCodeFilePart(s, partID, part)
 	case strings.Contains(partType, "tool") || strings.Contains(partType, "permission"):
-		return s.mergeToolStatus(summarizeToolPart(part))
+		return rememberOpenCodeToolPart(s, partID, part)
 	case partType == "step-finish" || partType == "step-start" || partType == "snapshot" || partType == "patch" || partType == "agent":
 		return false
 	default:
@@ -1203,12 +1212,17 @@ func (s *openCodeStreamState) applyPartDelta(properties map[string]any) bool {
 	}
 
 	partType := strings.ToLower(firstNonEmptyString(stringifyValue(properties["partType"]), stringifyValue(properties["type"])))
+	partID := firstNonEmptyString(stringifyValue(properties["partID"]), stringifyValue(properties["id"]))
 	if partType == "" && s.partKinds != nil {
-		partType = s.partKinds[firstNonEmptyString(stringifyValue(properties["partID"]), stringifyValue(properties["id"]))]
+		partType = s.partKinds[partID]
 	}
 
 	switch {
-	case strings.Contains(partType, "tool") || strings.Contains(partType, "permission"):
+	case strings.Contains(partType, "tool") || strings.Contains(partType, "permission") || partType == "file":
+		field := stringifyValue(properties["field"])
+		if isRenderableToolDeltaField(field) {
+			return appendOpenCodeToolOutput(s, partID, delta)
+		}
 		return false
 	case strings.Contains(partType, "reasoning") || strings.Contains(partType, "thinking"):
 		return s.mergeReasoningDelta(delta)
@@ -1224,8 +1238,19 @@ func (s *openCodeStreamState) view() openCodeStreamView {
 
 	assistantText, thinkReasoning, _ := splitThinkTaggedText(s.rawText)
 	reasoning := strings.TrimSpace(strings.Join(nonEmptyStrings(s.reasoning, thinkReasoning), "\n\n"))
+	
+	blocks := []string{}
+	for _, tool := range s.Tools {
+		if t := strings.TrimSpace(tool); t != "" {
+			blocks = append(blocks, t)
+		}
+	}
+	if strings.TrimSpace(assistantText) != "" {
+		blocks = append(blocks, strings.TrimSpace(assistantText))
+	}
+
 	return openCodeStreamView{
-		Text:       strings.TrimSpace(assistantText),
+		Text:       strings.TrimSpace(strings.Join(blocks, "\n\n")),
 		Reasoning:  reasoning,
 		ToolStatus: strings.TrimSpace(s.toolStatus),
 	}
@@ -2200,4 +2225,358 @@ func firstHeaderValue(headers http.Header, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+
+func rememberOpenCodeToolPart(state *openCodeStreamState, partID string, part map[string]any) bool {
+	label := renderToolLabel(part)
+	input := extractToolInput(part)
+	output := extractToolOutput(part)
+	if partID != "" {
+		if state.ToolLabels == nil {
+			state.ToolLabels = map[string]string{}
+		}
+		if label != "" {
+			state.ToolLabels[partID] = label
+		}
+		if input != "" {
+			if state.ToolInputs == nil {
+				state.ToolInputs = map[string]string{}
+			}
+			state.ToolInputs[partID] = input
+		} else if state.ToolInputs != nil {
+			input = state.ToolInputs[partID]
+		}
+		if output != "" {
+			if state.ToolOutputs == nil {
+				state.ToolOutputs = map[string]string{}
+			}
+			state.ToolOutputs[partID] = output
+		} else if state.ToolOutputs != nil {
+			output = state.ToolOutputs[partID]
+		}
+		label = state.ToolLabels[partID]
+	}
+	return rememberOpenCodeRenderedToolBlock(state, partID, renderStoredToolBlock(label, input, output))
+}
+
+func rememberOpenCodeFilePart(state *openCodeStreamState, partID string, part map[string]any) bool {
+	label := renderFileLabel(part)
+	content := extractFileContent(part)
+	if partID != "" {
+		if state.ToolLabels == nil {
+			state.ToolLabels = map[string]string{}
+		}
+		state.ToolLabels[partID] = label
+		if content != "" {
+			if state.ToolOutputs == nil {
+				state.ToolOutputs = map[string]string{}
+			}
+			state.ToolOutputs[partID] = content
+		} else if state.ToolOutputs != nil {
+			content = state.ToolOutputs[partID]
+		}
+	}
+	return rememberOpenCodeRenderedToolBlock(state, partID, renderStoredToolBlock(label, "", content))
+}
+
+func appendOpenCodeToolOutput(state *openCodeStreamState, partID, delta string) bool {
+	delta = cleanTerminalText(delta)
+	if partID == "" || delta == "" {
+		return false
+	}
+	if state.ToolOutputs == nil {
+		state.ToolOutputs = map[string]string{}
+	}
+	state.ToolOutputs[partID] += delta
+	label := "tool"
+	if state.ToolLabels != nil && state.ToolLabels[partID] != "" {
+		label = state.ToolLabels[partID]
+	}
+	input := ""
+	if state.ToolInputs != nil {
+		input = state.ToolInputs[partID]
+	}
+	return rememberOpenCodeRenderedToolBlock(state, partID, renderStoredToolBlock(label, input, state.ToolOutputs[partID]))
+}
+
+func rememberOpenCodeRenderedToolBlock(state *openCodeStreamState, partID, block string) bool {
+	block = strings.TrimSpace(block)
+	if block == "" {
+		return false
+	}
+	if partID != "" {
+		if state.ToolPartIndexes == nil {
+			state.ToolPartIndexes = map[string]int{}
+		}
+		if index, ok := state.ToolPartIndexes[partID]; ok && index >= 0 && index < len(state.Tools) {
+			if state.Tools[index] == block {
+				return false
+			}
+			state.Tools[index] = block
+			return true
+		}
+		state.ToolPartIndexes[partID] = len(state.Tools)
+		state.Tools = append(state.Tools, block)
+		return true
+	}
+	if !containsString(state.Tools, block) {
+		state.Tools = append(state.Tools, block)
+		return true
+	}
+	return false
+}
+
+func isRenderableToolDeltaField(field string) bool {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "", "text", "content", "output", "stdout", "stderr", "result", "data", "source", "code", "message", "error":
+		return true
+	default:
+		return false
+	}
+}
+
+func renderToolPart(part map[string]any) string {
+	return renderStoredToolBlock(renderToolLabel(part), extractToolInput(part), extractToolOutput(part))
+}
+
+func renderToolLabel(part map[string]any) string {
+	tool := firstStringFromMap(part, "tool", "name", "title")
+	state, _ := part["state"].(map[string]any)
+	if state == nil {
+		if tool == "" {
+			return "tool"
+		}
+		return tool
+	}
+	title := firstStringFromMap(state, "title")
+	status := firstStringFromMap(state, "status")
+	label := strings.TrimSpace(strings.Join([]string{tool, title}, " "))
+	if label == "" {
+		label = "tool"
+	}
+	if status != "" {
+		label += " (" + status + ")"
+	}
+	return label
+}
+
+func renderStoredToolBlock(label, input, output string) string {
+	if strings.HasPrefix(strings.TrimSpace(label), "파일") {
+		return renderFileBlock(label, output)
+	}
+	return renderToolBlock(label, input, output)
+}
+
+func renderToolBlock(label, input, output string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = "tool"
+	}
+	blocks := []string{fmt.Sprintf("> 도구 호출: `%s`", inlineCode(label))}
+	if input = sanitizeTerminalText(input); input != "" {
+		blocks = append(blocks, "입력:\n\n"+fencedCodeBlock(codeLanguageForTool(label, input), input))
+	}
+	if output = sanitizeTerminalText(output); output != "" {
+		blocks = append(blocks, "터미널 출력:\n\n"+fencedCodeBlock(codeLanguageForTool(label, output), output))
+	}
+	return strings.TrimSpace(strings.Join(blocks, "\n\n"))
+}
+
+func renderFilePart(part map[string]any) string {
+	return renderFileBlock(renderFileLabel(part), extractFileContent(part))
+}
+
+func renderFileLabel(part map[string]any) string {
+	filename := firstStringFromMap(part, "filename", "path", "url", "name", "title")
+	if filename == "" {
+		return "파일"
+	}
+	return "파일: " + filename
+}
+
+func renderFileBlock(label, content string) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = "파일"
+	}
+	blocks := []string{fmt.Sprintf("> %s", inlineCode(label))}
+	if content = sanitizeTerminalText(content); content != "" {
+		blocks = append(blocks, "소스:\n\n"+fencedCodeBlock(codeLanguageForFilename(label, content), content))
+	}
+	return strings.TrimSpace(strings.Join(blocks, "\n\n"))
+}
+
+func extractToolInput(part map[string]any) string {
+	state, _ := part["state"].(map[string]any)
+	for _, source := range []map[string]any{state, part} {
+		if source == nil {
+			continue
+		}
+		if command := firstStructuredTextField(source, "command", "script"); command != "" {
+			return command
+		}
+		if input := firstStructuredTextField(source, "input", "args", "arguments", "parameters"); input != "" {
+			return input
+		}
+	}
+	return ""
+}
+
+func extractToolOutput(part map[string]any) string {
+	state, _ := part["state"].(map[string]any)
+	for _, source := range []map[string]any{state, part} {
+		if source == nil {
+			continue
+		}
+		outputs := []string{}
+		if stdout := firstStructuredTextField(source, "stdout"); stdout != "" {
+			outputs = append(outputs, "stdout:\n"+stdout)
+		}
+		if stderr := firstStructuredTextField(source, "stderr"); stderr != "" {
+			outputs = append(outputs, "stderr:\n"+stderr)
+		}
+		if len(outputs) > 0 {
+			return strings.Join(outputs, "\n\n")
+		}
+		if output := firstStructuredTextField(source, "output", "result", "results", "response", "error", "message", "content", "data"); output != "" {
+			return output
+		}
+	}
+	return ""
+}
+
+func extractFileContent(part map[string]any) string {
+	return firstStructuredTextField(part, "content", "text", "source", "code", "data")
+}
+
+func firstStructuredTextField(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if text := structuredTextValue(values[key]); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func structuredTextValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return sanitizeTerminalText(typed)
+	case nil:
+		return ""
+	case map[string]any, []any:
+		body, err := json.MarshalIndent(typed, "", "  ")
+		if err != nil {
+			return ""
+		}
+		return sanitizeTerminalText(string(body))
+	default:
+		return sanitizeTerminalText(fmt.Sprint(typed))
+	}
+}
+
+func sanitizeTerminalText(value string) string {
+	return strings.TrimSpace(cleanTerminalText(value))
+}
+
+func cleanTerminalText(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return ansiEscapePattern.ReplaceAllString(value, "")
+}
+
+func fencedCodeBlock(language, text string) string {
+	text = sanitizeTerminalText(text)
+	if text == "" {
+		return ""
+	}
+	fence := markdownFence(text)
+	language = strings.TrimSpace(language)
+	if language != "" {
+		return fmt.Sprintf("%s%s\n%s\n%s", fence, language, text, fence)
+	}
+	return fmt.Sprintf("%s\n%s\n%s", fence, text, fence)
+}
+
+func markdownFence(text string) string {
+	maxRun := 2
+	run := 0
+	for _, r := range text {
+		if r == '`' {
+			run++
+			if run > maxRun {
+				maxRun = run
+			}
+			continue
+		}
+		run = 0
+	}
+	return strings.Repeat("`", maxRun+1)
+}
+
+func codeLanguageForTool(label, content string) string {
+	lowerLabel := strings.ToLower(label)
+	switch {
+	case strings.Contains(lowerLabel, "powershell") || strings.Contains(lowerLabel, "pwsh"):
+		return "powershell"
+	case strings.Contains(lowerLabel, "bash") || strings.Contains(lowerLabel, "shell") || strings.Contains(lowerLabel, "terminal") || strings.Contains(lowerLabel, "command"):
+		return "console"
+	case json.Valid([]byte(strings.TrimSpace(content))):
+		return "json"
+	default:
+		return "text"
+	}
+}
+
+func codeLanguageForFilename(label, content string) string {
+	lower := strings.ToLower(label)
+	switch {
+	case strings.HasSuffix(lower, ".go"):
+		return "go"
+	case strings.HasSuffix(lower, ".ts"):
+		return "typescript"
+	case strings.HasSuffix(lower, ".tsx"):
+		return "tsx"
+	case strings.HasSuffix(lower, ".js"):
+		return "javascript"
+	case strings.HasSuffix(lower, ".jsx"):
+		return "jsx"
+	case strings.HasSuffix(lower, ".json") || json.Valid([]byte(strings.TrimSpace(content))):
+		return "json"
+	case strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml"):
+		return "yaml"
+	case strings.HasSuffix(lower, ".md"):
+		return "markdown"
+	case strings.HasSuffix(lower, ".py"):
+		return "python"
+	case strings.HasSuffix(lower, ".sh"):
+		return "bash"
+	case strings.HasSuffix(lower, ".ps1"):
+		return "powershell"
+	case strings.HasSuffix(lower, ".sql"):
+		return "sql"
+	case strings.HasSuffix(lower, ".html"):
+		return "html"
+	case strings.HasSuffix(lower, ".css"):
+		return "css"
+	case strings.HasSuffix(lower, ".scss"):
+		return "scss"
+	default:
+		return "text"
+	}
+}
+
+func inlineCode(value string) string {
+	return strings.ReplaceAll(strings.TrimSpace(value), "`", "'")
+}
+
+func containsString(slice []string, value string) bool {
+	for _, item := range slice {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
