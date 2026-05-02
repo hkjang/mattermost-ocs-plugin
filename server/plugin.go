@@ -150,6 +150,12 @@ func (p *Plugin) handlePostedMessage(post *model.Post) error {
 	}
 
 	_, runErr := p.executeBotAndPost(context.Background(), request)
+	if runErr != nil {
+		// executeBotAndPost가 내부에서 postFailure를 호출하지 못한 경우,
+		// 사용자가 채팅창에서 에러를 볼 수 있도록 에러 메시지를 직접 포스팅한다.
+		_ = p.postInstruction(channel, responseRootID(post), account,
+			fmt.Sprintf(":warning: OpenCode 요청 실패: `%s`", runErr.Error()))
+	}
 	return runErr
 }
 

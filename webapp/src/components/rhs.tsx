@@ -285,7 +285,7 @@ export default function RHSPane() {
                     {lastResult.error_message && <div style={{whiteSpace: 'pre-wrap'}}>{lastResult.error_message}</div>}
                     {lastResult.error_code && <div>{`Code: ${lastResult.error_code}`}</div>}
                     {lastResult.retryable !== undefined && <div>{`Retryable: ${lastResult.retryable ? 'Yes' : 'No'}`}</div>}
-                    {lastResult.correlation_id && <div>{`Correlation: ${lastResult.correlation_id}`}</div>}
+
                 </section>
             )}
 
@@ -295,7 +295,7 @@ export default function RHSPane() {
                     {history.length === 0 && <span>{'No executions yet.'}</span>}
                     {history.map((item) => (
                         <div
-                            key={item.correlation_id}
+                            key={`${item.session_id || item.bot_id}-${item.started_at}`}
                             style={{fontSize: '12px'}}
                         >
                             <strong>{item.bot_name || item.bot_username}</strong>

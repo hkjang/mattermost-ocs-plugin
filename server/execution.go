@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -30,28 +29,26 @@ type BotRunRequest struct {
 }
 
 type BotRunResult struct {
-	CorrelationID string `json:"correlation_id"`
-	BotID         string `json:"bot_id"`
-	BotUsername   string `json:"bot_username"`
-	BotName       string `json:"bot_name"`
-	BotMode       string `json:"bot_mode,omitempty"`
-	SessionID     string `json:"session_id,omitempty"`
-	AgentID       string `json:"agent_id,omitempty"`
-	ModelID       string `json:"model_id,omitempty"`
-	TaskID        string `json:"task_id,omitempty"`
-	PostID        string `json:"post_id,omitempty"`
-	Status        string `json:"status"`
-	Output        string `json:"output,omitempty"`
-	ErrorMessage  string `json:"error_message,omitempty"`
-	ErrorCode     string `json:"error_code,omitempty"`
-	Retryable     bool   `json:"retryable"`
+	BotID        string `json:"bot_id"`
+	BotUsername  string `json:"bot_username"`
+	BotName      string `json:"bot_name"`
+	BotMode      string `json:"bot_mode,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
+	AgentID      string `json:"agent_id,omitempty"`
+	ModelID      string `json:"model_id,omitempty"`
+	TaskID       string `json:"task_id,omitempty"`
+	PostID       string `json:"post_id,omitempty"`
+	Status       string `json:"status"`
+	Output       string `json:"output,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	ErrorCode    string `json:"error_code,omitempty"`
+	Retryable    bool   `json:"retryable"`
 }
 
 type streamingPostUpdater struct {
 	plugin        *Plugin
 	post          *model.Post
 	account       botAccount
-	correlationID string
 	sessionID     string
 	agentID       string
 	modelID       string
@@ -72,7 +69,6 @@ const (
 
 func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (*BotRunResult, error) {
 	startedAt := time.Now()
-	correlationID := uuid.NewString()
 
 	cfg, err := p.getRuntimeConfiguration()
 	if err != nil {
@@ -116,6 +112,7 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 	}
 
 	cfg = cfg.deriveForBot(*bot)
+	p.API.LogInfo("[OCS-DEBUG] executeBotAndPost: resolved bot and config", "bot_id", bot.ID, "bot_username", bot.Username, "base_url", cfg.OpenCodeBaseURL, "streaming", fmt.Sprintf("%v", cfg.EnableStreaming))
 
 	prompt, err := p.buildExecutionPrompt(ctx, cfg, request, *bot)
 	if err != nil {
@@ -130,8 +127,10 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 
 	sessionInfo, err := p.resolveConversationSession(callCtx, cfg, *bot, channel, request, prompt)
 	if err != nil {
+		p.API.LogError("[OCS-DEBUG] executeBotAndPost: session resolution failed", "error", err.Error())
 		return nil, err
 	}
+	p.API.LogInfo("[OCS-DEBUG] executeBotAndPost: session resolved", "session_id", sessionInfo.SessionID, "conversation_key", sessionInfo.ConversationKey)
 
 	agentID := resolveAgentID(cfg, *bot)
 	modelID := resolveModelID(cfg, *bot)
@@ -139,20 +138,19 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 
 	var streamUpdater *streamingPostUpdater
 	if cfg.EnableStreaming {
-		placeholder, placeholderErr := p.createStreamingPost(channel, request.RootID, account, correlationID, sessionInfo.SessionID, agentID, modelID)
+		placeholder, placeholderErr := p.createStreamingPost(channel, request.RootID, account, sessionInfo.SessionID, agentID, modelID)
 		if placeholderErr != nil {
 			return nil, placeholderErr
 		}
 		streamUpdater = &streamingPostUpdater{
-			plugin:        p,
-			post:          placeholder,
-			account:       account,
-			correlationID: correlationID,
-			sessionID:     sessionInfo.SessionID,
-			agentID:       agentID,
-			modelID:       modelID,
-			interval:      cfg.StreamingUpdateInterval,
-			lastRendered:  placeholder.Message,
+			plugin:       p,
+			post:         placeholder,
+			account:      account,
+			sessionID:    sessionInfo.SessionID,
+			agentID:      agentID,
+			modelID:      modelID,
+			interval:     cfg.StreamingUpdateInterval,
+			lastRendered: placeholder.Message,
 		}
 	}
 
@@ -163,7 +161,9 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 		return p.invokeOpenCode(callCtx, cfg, sessionID, messageRequest)
 	}
 
+	p.API.LogInfo("[OCS-DEBUG] executeBotAndPost: invoking OpenCode", "session_id", sessionInfo.SessionID, "streaming", fmt.Sprintf("%v", cfg.EnableStreaming), "base_url", cfg.OpenCodeBaseURL)
 	output, statusCode, runErr := runWithSession(sessionInfo.SessionID)
+	p.API.LogInfo("[OCS-DEBUG] executeBotAndPost: OpenCode returned", "output_len", fmt.Sprintf("%d", len(output)), "status_code", fmt.Sprintf("%d", statusCode), "has_error", fmt.Sprintf("%v", runErr != nil))
 	if isMissingResourceError(runErr) {
 		p.resetConversationSession(callCtx, cfg, sessionInfo.ConversationKey)
 		sessionInfo, err = p.resolveConversationSession(callCtx, cfg, *bot, channel, request, prompt)
@@ -177,34 +177,33 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 
 	completedAt := time.Now()
 	if runErr != nil {
-		p.API.LogError("OpenCode execution failed", "error", runErr.Error(), "correlation_id", correlationID, "session_id", sessionInfo.SessionID)
+		p.API.LogError("OpenCode execution failed", "error", runErr.Error(), "session_id", sessionInfo.SessionID)
 		failure := describeExecutionFailure(runErr, statusCode >= 500 || statusCode == 0)
-		record := newExecutionRecord(request, account.Definition, sessionInfo.SessionID, "", agentID, modelID, correlationID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, completedAt)
+		record := newExecutionRecord(request, account.Definition, sessionInfo.SessionID, "", agentID, modelID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, completedAt)
 		p.appendExecutionHistory(request.UserID, record)
-		p.logUsage(cfg, correlationID, request, account.Definition, sessionInfo.SessionID, agentID, modelID, "failed", failure.Message)
+		p.logUsage(cfg, request, account.Definition, sessionInfo.SessionID, agentID, modelID, "failed", failure.Message)
 
 		var postErr error
 		if streamUpdater != nil {
 			postErr = streamUpdater.fail(failure)
 		} else {
-			postErr = p.postFailure(channel, request.RootID, account, correlationID, sessionInfo.SessionID, agentID, modelID, failure)
+			postErr = p.postFailure(channel, request.RootID, account, sessionInfo.SessionID, agentID, modelID, failure)
 		}
 		if postErr != nil {
-			p.API.LogError("Failed to post OpenCode error response", "error", postErr, "correlation_id", correlationID)
+			p.API.LogError("Failed to post OpenCode error response", "error", postErr)
 		}
 		return &BotRunResult{
-			CorrelationID: correlationID,
-			BotID:         account.Definition.ID,
-			BotUsername:   account.Definition.Username,
-			BotName:       account.Definition.DisplayName,
-			BotMode:       account.Definition.Mode,
-			SessionID:     sessionInfo.SessionID,
-			AgentID:       agentID,
-			ModelID:       modelID,
-			Status:        "failed",
-			ErrorMessage:  failure.Message,
-			ErrorCode:     failure.ErrorCode,
-			Retryable:     failure.Retryable,
+			BotID:        account.Definition.ID,
+			BotUsername:  account.Definition.Username,
+			BotName:      account.Definition.DisplayName,
+			BotMode:      account.Definition.Mode,
+			SessionID:    sessionInfo.SessionID,
+			AgentID:      agentID,
+			ModelID:      modelID,
+			Status:       "failed",
+			ErrorMessage: failure.Message,
+			ErrorCode:    failure.ErrorCode,
+			Retryable:    failure.Retryable,
 		}, runErr
 	}
 
@@ -212,7 +211,7 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 	if account.Definition.isCodingBot() {
 		var taskErr error
 		metadataCtx, metadataCancel := context.WithTimeout(context.Background(), minDuration(cfg.DefaultTimeout, 10*time.Second))
-		codingTask, output, taskErr = p.createCodingTask(metadataCtx, cfg, account.Definition, request, account, correlationID, sessionInfo.SessionID, output)
+		codingTask, output, taskErr = p.createCodingTask(metadataCtx, cfg, account.Definition, request, account, sessionInfo.SessionID, output)
 		metadataCancel()
 		if taskErr != nil {
 			return nil, taskErr
@@ -223,11 +222,11 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 	if streamUpdater != nil {
 		post, err = streamUpdater.complete(output)
 	} else {
-		post, err = p.postSuccess(channel, request.RootID, account, correlationID, sessionInfo.SessionID, agentID, modelID, output)
+		post, err = p.postSuccess(channel, request.RootID, account, sessionInfo.SessionID, agentID, modelID, output)
 	}
 	if err != nil {
 		failure := describeExecutionFailure(err, true)
-		record := newExecutionRecord(request, account.Definition, sessionInfo.SessionID, codingTask.ID, agentID, modelID, correlationID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, time.Now())
+		record := newExecutionRecord(request, account.Definition, sessionInfo.SessionID, codingTask.ID, agentID, modelID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, time.Now())
 		p.appendExecutionHistory(request.UserID, record)
 		return nil, err
 	}
@@ -242,23 +241,22 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 		}
 	}
 
-	record := newExecutionRecord(request, account.Definition, sessionInfo.SessionID, codingTask.ID, agentID, modelID, correlationID, "completed", prompt, "", "", false, startedAt, completedAt)
+	record := newExecutionRecord(request, account.Definition, sessionInfo.SessionID, codingTask.ID, agentID, modelID, "completed", prompt, "", "", false, startedAt, completedAt)
 	p.appendExecutionHistory(request.UserID, record)
-	p.logUsage(cfg, correlationID, request, account.Definition, sessionInfo.SessionID, agentID, modelID, "completed", "")
+	p.logUsage(cfg, request, account.Definition, sessionInfo.SessionID, agentID, modelID, "completed", "")
 
 	return &BotRunResult{
-		CorrelationID: correlationID,
-		BotID:         account.Definition.ID,
-		BotUsername:   account.Definition.Username,
-		BotName:       account.Definition.DisplayName,
-		BotMode:       account.Definition.Mode,
-		SessionID:     sessionInfo.SessionID,
-		AgentID:       agentID,
-		ModelID:       modelID,
-		TaskID:        codingTask.ID,
-		PostID:        post.Id,
-		Status:        "completed",
-		Output:        output,
+		BotID:       account.Definition.ID,
+		BotUsername: account.Definition.Username,
+		BotName:     account.Definition.DisplayName,
+		BotMode:     account.Definition.Mode,
+		SessionID:   sessionInfo.SessionID,
+		AgentID:     agentID,
+		ModelID:     modelID,
+		TaskID:      codingTask.ID,
+		PostID:      post.Id,
+		Status:      "completed",
+		Output:      output,
 	}, nil
 }
 
@@ -645,7 +643,7 @@ func (p *Plugin) ensureBotInChannel(channelID, botUserID string) error {
 	return nil
 }
 
-func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botAccount, correlationID, sessionID, agentID, modelID, output string) (*model.Post, error) {
+func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botAccount, sessionID, agentID, modelID, output string) (*model.Post, error) {
 	if err := p.ensureBotInChannel(channel.Id, account.UserID); err != nil {
 		return nil, err
 	}
@@ -655,12 +653,11 @@ func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botA
 		ChannelId: channel.Id,
 		RootId:    rootID,
 		Type:      openCodeBotPostType,
-		Message:   buildBotResponseMessage(output, correlationID, false),
+		Message:   buildBotResponseMessage(output, false),
 		Props: map[string]any{
 			"from_bot":                    "true",
 			"opencode_bot_id":             account.Definition.ID,
 			"opencode_bot_mode":           account.Definition.Mode,
-			"opencode_correlation_id":     correlationID,
 			"opencode_session_id":         sessionID,
 			"opencode_agent_id":           agentID,
 			"opencode_model_id":           modelID,
@@ -674,7 +671,7 @@ func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botA
 	return post, nil
 }
 
-func (p *Plugin) postFailure(channel *model.Channel, rootID string, account botAccount, correlationID, sessionID, agentID, modelID string, failure executionFailureView) error {
+func (p *Plugin) postFailure(channel *model.Channel, rootID string, account botAccount, sessionID, agentID, modelID string, failure executionFailureView) error {
 	if err := p.ensureBotInChannel(channel.Id, account.UserID); err != nil {
 		return err
 	}
@@ -684,12 +681,11 @@ func (p *Plugin) postFailure(channel *model.Channel, rootID string, account botA
 		ChannelId: channel.Id,
 		RootId:    rootID,
 		Type:      openCodeBotPostType,
-		Message:   buildBotFailureMessage(correlationID, failure),
+		Message:   buildBotFailureMessage(failure),
 		Props: map[string]any{
 			"from_bot":                    "true",
 			"opencode_bot_id":             account.Definition.ID,
 			"opencode_bot_mode":           account.Definition.Mode,
-			"opencode_correlation_id":     correlationID,
 			"opencode_session_id":         sessionID,
 			"opencode_agent_id":           agentID,
 			"opencode_model_id":           modelID,
@@ -742,11 +738,11 @@ func responseRootID(post *model.Post) string {
 	return post.Id
 }
 
-func (p *Plugin) logUsage(cfg *runtimeConfiguration, correlationID string, request BotRunRequest, bot BotDefinition, sessionID, agentID, modelID, status, errorMessage string) {
+func (p *Plugin) logUsage(cfg *runtimeConfiguration, request BotRunRequest, bot BotDefinition, sessionID, agentID, modelID, status, errorMessage string) {
 	if !cfg.EnableUsageLogs {
 		return
 	}
-	p.API.LogInfo("OpenCode execution", "correlation_id", correlationID, "bot_id", bot.ID, "bot_username", bot.Username, "session_id", sessionID, "agent_id", agentID, "model_id", modelID, "user_id", request.UserID, "channel_id", request.ChannelID, "source", request.Source, "status", status, "error", errorMessage)
+	p.API.LogInfo("OpenCode execution", "bot_id", bot.ID, "bot_username", bot.Username, "session_id", sessionID, "agent_id", agentID, "model_id", modelID, "user_id", request.UserID, "channel_id", request.ChannelID, "source", request.Source, "status", status, "error", errorMessage)
 }
 
 func validateRequestedInputs(bot BotDefinition, inputs map[string]any) error {
@@ -792,7 +788,7 @@ func botDescription(bot BotDefinition) string {
 	return "OpenCode bot for " + strings.Join(targets, " and ")
 }
 
-func (p *Plugin) createStreamingPost(channel *model.Channel, rootID string, account botAccount, correlationID, sessionID, agentID, modelID string) (*model.Post, error) {
+func (p *Plugin) createStreamingPost(channel *model.Channel, rootID string, account botAccount, sessionID, agentID, modelID string) (*model.Post, error) {
 	if err := p.ensureBotInChannel(channel.Id, account.UserID); err != nil {
 		return nil, err
 	}
@@ -807,7 +803,6 @@ func (p *Plugin) createStreamingPost(channel *model.Channel, rootID string, acco
 			"from_bot":                    "true",
 			"opencode_bot_id":             account.Definition.ID,
 			"opencode_bot_mode":           account.Definition.Mode,
-			"opencode_correlation_id":     correlationID,
 			"opencode_session_id":         sessionID,
 			"opencode_agent_id":           agentID,
 			"opencode_model_id":           modelID,
@@ -834,7 +829,7 @@ func (u *streamingPostUpdater) update(view openCodeStreamView, final bool) {
 		return
 	}
 	if _, err := u.render(view, final, executionFailureView{}); err != nil {
-		u.plugin.API.LogError("Failed to update OpenCode streaming post", "error", err, "correlation_id", u.correlationID)
+		u.plugin.API.LogError("Failed to update OpenCode streaming post", "error", err)
 	}
 }
 
@@ -855,9 +850,9 @@ func (u *streamingPostUpdater) render(view openCodeStreamView, completed bool, f
 
 	content := view.Text
 	previewMessage := buildBotStreamingMessage(content)
-	message := buildBotResponseMessage(content, u.correlationID, !failure.HasFailure && !completed)
+	message := buildBotResponseMessage(content, !failure.HasFailure && !completed)
 	if failure.HasFailure {
-		message = buildBotFailureMessage(u.correlationID, failure)
+		message = buildBotFailureMessage(failure)
 	}
 	if !completed && !failure.HasFailure {
 		message = previewMessage
@@ -967,7 +962,7 @@ func buildBotStreamingMessage(output string) string {
 	return body
 }
 
-func buildBotResponseMessage(output, correlationID string, streaming bool) string {
+func buildBotResponseMessage(output string, streaming bool) string {
 	body := stripLeadingOpenCodeLabel(strings.TrimSpace(output))
 	if body == "" && streaming {
 		body = "_Generating a response..._"
@@ -975,9 +970,7 @@ func buildBotResponseMessage(output, correlationID string, streaming bool) strin
 	if body == "" {
 		body = "_No response content was returned._"
 	}
-
-	parts := []string{body, "", fmt.Sprintf("_Correlation ID:_ `%s`", correlationID)}
-	return strings.TrimSpace(strings.Join(parts, "\n"))
+	return body
 }
 
 type executionFailureView struct {
@@ -1009,7 +1002,7 @@ func describeExecutionFailure(err error, defaultRetryable bool) executionFailure
 	}
 }
 
-func buildBotFailureMessage(correlationID string, failure executionFailureView) string {
+func buildBotFailureMessage(failure executionFailureView) string {
 	lines := []string{"OpenCode could not complete this request."}
 	if failure.ErrorCode != "" {
 		lines = append(lines, "", fmt.Sprintf("Code: `%s`", failure.ErrorCode))
@@ -1017,7 +1010,6 @@ func buildBotFailureMessage(correlationID string, failure executionFailureView) 
 	if failure.Retryable {
 		lines = append(lines, "", "Please try again in a moment.")
 	}
-	lines = append(lines, "", fmt.Sprintf("_Correlation ID:_ `%s`", correlationID))
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 

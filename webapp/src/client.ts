@@ -52,7 +52,6 @@ export type BotDefinition = {
 };
 
 export type ExecutionRecord = {
-    correlation_id: string;
     bot_id: string;
     bot_username: string;
     bot_name: string;
@@ -74,7 +73,6 @@ export type ExecutionRecord = {
 };
 
 export type BotRunResult = {
-    correlation_id: string;
     bot_id: string;
     bot_username: string;
     bot_name: string;
@@ -233,7 +231,6 @@ export type CodingCommand = {
 
 export type CodingTask = {
     id: string;
-    correlation_id: string;
     session_id: string;
     bot_id: string;
     bot_username: string;

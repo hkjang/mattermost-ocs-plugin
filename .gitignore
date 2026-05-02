@@ -3,6 +3,8 @@ dist/
 package-temp/
 webapp/src/manifest.ts
 server/manifest.go
+.claude
+server.exe
 
 # Mac
 .DS_Store

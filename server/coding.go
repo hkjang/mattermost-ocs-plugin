@@ -61,7 +61,6 @@ type CodingDiff struct {
 
 type CodingTask struct {
 	ID              string                  `json:"id"`
-	CorrelationID   string                  `json:"correlation_id"`
 	SessionID       string                  `json:"session_id"`
 	BotID           string                  `json:"bot_id"`
 	BotUsername     string                  `json:"bot_username"`
@@ -138,7 +137,7 @@ func (p *Plugin) createCodingTask(
 	bot BotDefinition,
 	request BotRunRequest,
 	account botAccount,
-	correlationID, sessionID, output string,
+	sessionID, output string,
 ) (CodingTask, string, error) {
 	visibleOutput, commands, summary := extractCodingTaskPlan(output)
 	snapshot, _ := p.inspectCodingWorkspace(ctx, cfg, bot)
@@ -146,7 +145,6 @@ func (p *Plugin) createCodingTask(
 	now := time.Now().UnixMilli()
 	task := CodingTask{
 		ID:              uuid.NewString(),
-		CorrelationID:   correlationID,
 		SessionID:       sessionID,
 		BotID:           bot.ID,
 		BotUsername:     account.Definition.Username,

@@ -9,7 +9,6 @@ import (
 const historyKeyPrefix = "exec_history:"
 
 type ExecutionRecord struct {
-	CorrelationID string `json:"correlation_id"`
 	BotID         string `json:"bot_id"`
 	BotUsername   string `json:"bot_username"`
 	BotName       string `json:"bot_name"`
@@ -84,13 +83,12 @@ func (p *Plugin) getExecutionHistory(userID string, limit int) ([]ExecutionRecor
 func newExecutionRecord(
 	request BotRunRequest,
 	bot BotDefinition,
-	sessionID, taskID, agentID, modelID, correlationID, status, prompt, errorMessage, errorCode string,
+	sessionID, taskID, agentID, modelID, status, prompt, errorMessage, errorCode string,
 	retryable bool,
 	startedAt time.Time,
 	completedAt time.Time,
 ) ExecutionRecord {
 	return ExecutionRecord{
-		CorrelationID: correlationID,
 		BotID:         bot.ID,
 		BotUsername:   bot.Username,
 		BotName:       bot.DisplayName,
