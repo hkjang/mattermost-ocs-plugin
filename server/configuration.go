@@ -192,9 +192,9 @@ func (c storedPluginConfig) normalize() (*runtimeConfiguration, error) {
 		ContextPostLimit:  positiveOrDefault(c.Runtime.ContextPostLimit, defaultContextPostLimit),
 		EnableDebugLogs:   c.Runtime.EnableDebugLogs,
 		EnableUsageLogs:   c.Runtime.EnableUsageLogs,
-		DefaultProviderID: strings.TrimSpace(c.OpenCodeDefaults.ProviderID),
-		DefaultModelID:    strings.TrimSpace(c.OpenCodeDefaults.ModelID),
-		DefaultAgentID:    strings.TrimSpace(c.OpenCodeDefaults.AgentID),
+		DefaultProviderID: "", // intentionally ignored due to stale config issue
+		DefaultModelID:    "",
+		DefaultAgentID:    "",
 		SessionReuseScope: normalizeSessionReuseScope(c.SessionPolicy.ReuseScope),
 	}
 	cfg.DefaultTimeout = time.Duration(positiveOrDefault(c.Runtime.DefaultTimeoutSeconds, defaultTimeoutSeconds)) * time.Second
