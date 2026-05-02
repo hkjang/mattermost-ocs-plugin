@@ -135,7 +135,7 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 
 	agentID := resolveAgentID(cfg, *bot)
 	modelID := resolveModelID(cfg, *bot)
-	messageRequest := buildOpenCodeMessageRequest(*bot, prompt, agentID, modelID, uuid.NewString())
+	messageRequest := buildOpenCodeMessageRequest(*bot, prompt, agentID, modelID, "")
 
 	var streamUpdater *streamingPostUpdater
 	if cfg.EnableStreaming {
@@ -168,7 +168,6 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 		p.resetConversationSession(callCtx, cfg, sessionInfo.ConversationKey)
 		sessionInfo, err = p.resolveConversationSession(callCtx, cfg, *bot, channel, request, prompt)
 		if err == nil {
-			messageRequest.MessageID = uuid.NewString()
 			if streamUpdater != nil {
 				streamUpdater.sessionID = sessionInfo.SessionID
 			}
@@ -278,8 +277,11 @@ func (p *Plugin) resolveConversationSession(
 }
 
 func buildOpenCodeMessageRequest(bot BotDefinition, prompt, agentID, modelID, messageID string) openCodeMessageRequest {
+	// OpenCode generates its own message IDs (msg_xxx). Sending an external
+	// UUID here causes schema validation 400s on some server versions, so we
+	// only forward `messageID` when an explicit one is supplied.
 	request := openCodeMessageRequest{
-		MessageID: messageID,
+		MessageID: strings.TrimSpace(messageID),
 		Agent:     strings.TrimSpace(agentID),
 		System:    strings.TrimSpace(bot.SystemPrompt),
 		Parts: []openCodePart{{
@@ -1079,5 +1081,12 @@ func isMissingResourceError(err error) bool {
 	if !errors.As(err, &callErr) {
 		return false
 	}
-	return callErr.Code == "not_found"
+	// OpenCode usually returns 404 for stale session ids, but some versions
+	// answer 400 once a session has been garbage collected. Treat both as a
+	// signal to drop the cached session and retry with a fresh one.
+	switch callErr.Code {
+	case "not_found", "bad_request":
+		return true
+	}
+	return false
 }

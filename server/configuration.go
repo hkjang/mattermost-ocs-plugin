@@ -414,7 +414,42 @@ func (p *Plugin) resetLegacyConfigOnce(cfg *configuration) (bool, error) {
 		return false, fmt.Errorf("failed to record legacy config reset: %w", appErr)
 	}
 
+	if cleared, err := p.purgeStoredSessionKeys(); err != nil {
+		p.API.LogWarn("Failed to purge stale OpenCode session metadata", "error", err.Error())
+	} else if cleared > 0 {
+		p.API.LogInfo("Purged stale OpenCode session metadata after legacy reset", "removed_keys", cleared)
+	}
+
 	cfg.Config = ""
 	p.API.LogInfo("Cleared legacy OpenCode plugin configuration; previous values backed up to KV.", "kv_key", legacyConfigBackupKVKey)
 	return true, nil
+}
+
+// purgeStoredSessionKeys deletes every cached session map/meta KV entry so the
+// plugin no longer reuses session IDs from a previous install or OpenCode
+// instance. It pages through KVList to handle large key sets.
+func (p *Plugin) purgeStoredSessionKeys() (int, error) {
+	removed := 0
+	for page := 0; ; page++ {
+		keys, appErr := p.API.KVList(page, 200)
+		if appErr != nil {
+			return removed, fmt.Errorf("failed to list KV keys: %w", appErr)
+		}
+		if len(keys) == 0 {
+			break
+		}
+		for _, key := range keys {
+			if !strings.HasPrefix(key, sessionMapKeyPrefix) && !strings.HasPrefix(key, sessionMetaKeyPrefix) {
+				continue
+			}
+			if appErr := p.API.KVDelete(key); appErr != nil {
+				return removed, fmt.Errorf("failed to delete session key %q: %w", key, appErr)
+			}
+			removed++
+		}
+		if len(keys) < 200 {
+			break
+		}
+	}
+	return removed, nil
 }
