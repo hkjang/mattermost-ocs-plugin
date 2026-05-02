@@ -333,7 +333,11 @@ func (p *Plugin) invokeOpenCodeStream(
 		}
 	}()
 
-	idleWindow := maxDuration(cfg.DefaultTimeout, 2*time.Minute)
+	// Tool runs (long bash, slow LLM thinking after a tool result) can leave
+	// the SSE silent for several minutes. Use a generous idle window so we
+	// don't finalize partial replies before the model actually emits its
+	// last answer.
+	idleWindow := maxDuration(cfg.DefaultTimeout, 5*time.Minute)
 	timer := time.NewTimer(idleWindow)
 	defer timer.Stop()
 

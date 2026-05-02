@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	defaultTimeoutSeconds       = 30
+	defaultTimeoutSeconds       = 120
 	defaultMaxInputLength       = 4000
-	defaultMaxOutputLength      = 8000
+	defaultMaxOutputLength      = 14000
 	defaultContextPostLimit     = 8
 	defaultStreamIntervalMS     = 350
 	defaultIdleExpireMinutes    = 120

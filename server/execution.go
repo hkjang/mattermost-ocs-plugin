@@ -122,7 +122,18 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 		return nil, fmt.Errorf("prompt is empty")
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, cfg.DefaultTimeout)
+	// Streaming conversations can run for many minutes (multiple tool calls,
+	// long generations). The previous 30s hard cap on callCtx killed the SSE
+	// before final answers arrived. Streaming relies on the per-stream idle
+	// timer in invokeOpenCodeStream to detect stuck servers; non-streaming
+	// requests get DefaultTimeout via the HTTP client itself.
+	var callCtx context.Context
+	var cancel context.CancelFunc
+	if cfg.EnableStreaming {
+		callCtx, cancel = context.WithCancel(ctx)
+	} else {
+		callCtx, cancel = context.WithTimeout(ctx, cfg.DefaultTimeout)
+	}
 	defer cancel()
 
 	sessionInfo, err := p.resolveConversationSession(callCtx, cfg, *bot, channel, request, prompt)
