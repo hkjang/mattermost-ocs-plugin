@@ -342,20 +342,35 @@ func (p *Plugin) invokeOpenCodeStream(
 	defer timer.Stop()
 
 	streamState := &openCodeStreamState{}
+
+	// finalize collects the best-known final reply for the session and
+	// publishes it. It always tries to pull the authoritative assistant reply
+	// from the REST API so we never lose the model's final answer when the
+	// SSE drops between the tool result and the final text part, or when
+	// session.idle races ahead of the trailing message.part.updated event.
+	finalize := func(refresh bool) string {
+		if refresh {
+			if latest, err := p.getLatestOpenCodeReply(ctx, cfg, sessionID); err == nil {
+				latestTrim := strings.TrimSpace(latest)
+				if latestTrim != "" && len(latestTrim) >= len(strings.TrimSpace(streamState.rawText)) {
+					streamState.mergeTextSnapshot(latest)
+				}
+			}
+		}
+		finalView := streamState.view()
+		finalView.Text = truncateString(finalView.Text, cfg.MaxOutputLength)
+		if onUpdate != nil && finalView.Text != "" {
+			onUpdate(finalView, true)
+		}
+		return finalView.Text
+	}
+
 	for {
 		select {
 		case item, ok := <-items:
 			if !ok {
-				finalView := streamState.view()
-				if finalView.Text != "" {
-					if latest, latestErr := p.getLatestOpenCodeReply(ctx, cfg, sessionID); latestErr == nil && latest != "" {
-						finalView.Text = mergeOpenCodeStreamOutput(finalView.Text, latest)
-					}
-					finalView.Text = truncateString(finalView.Text, cfg.MaxOutputLength)
-					if onUpdate != nil {
-						onUpdate(finalView, true)
-					}
-					return finalView.Text, statusCode, nil
+				if final := finalize(true); final != "" {
+					return final, statusCode, nil
 				}
 				return "", statusCode, newServiceCallError(
 					"stream_closed",
@@ -368,13 +383,8 @@ func (p *Plugin) invokeOpenCodeStream(
 				)
 			}
 			if item.err != nil {
-				finalView := streamState.view()
-				if finalView.Text != "" {
-					finalView.Text = truncateString(finalView.Text, cfg.MaxOutputLength)
-					if onUpdate != nil {
-						onUpdate(finalView, true)
-					}
-					return finalView.Text, statusCode, nil
+				if final := finalize(true); final != "" {
+					return final, statusCode, nil
 				}
 				return "", statusCode, newServiceCallError(
 					"stream_parse_failed",
@@ -412,34 +422,16 @@ func (p *Plugin) invokeOpenCodeStream(
 				if streamState.sessionError != "" {
 					return "", statusCode, errors.New(streamState.sessionError)
 				}
-				if latest, latestErr := p.getLatestOpenCodeReply(ctx, cfg, sessionID); latestErr == nil && latest != "" {
-					view.Text = truncateString(mergeOpenCodeStreamOutput(view.Text, latest), cfg.MaxOutputLength)
-				}
-				if onUpdate != nil && view.Text != "" {
-					onUpdate(view, true)
-				}
-				return view.Text, statusCode, nil
+				return finalize(true), statusCode, nil
 			}
 		case <-timer.C:
-			finalView := streamState.view()
-			if finalView.Text != "" {
-				if latest, latestErr := p.getLatestOpenCodeReply(ctx, cfg, sessionID); latestErr == nil && latest != "" {
-					finalView.Text = truncateString(mergeOpenCodeStreamOutput(finalView.Text, latest), cfg.MaxOutputLength)
-				}
-				if onUpdate != nil {
-					onUpdate(finalView, true)
-				}
-				return finalView.Text, statusCode, nil
+			if final := finalize(true); final != "" {
+				return final, statusCode, nil
 			}
 			timer.Reset(idleWindow)
 		case <-ctx.Done():
-			finalView := streamState.view()
-			if finalView.Text != "" {
-				finalView.Text = truncateString(finalView.Text, cfg.MaxOutputLength)
-				if onUpdate != nil {
-					onUpdate(finalView, true)
-				}
-				return finalView.Text, statusCode, nil
+			if final := finalize(false); final != "" {
+				return final, statusCode, nil
 			}
 			return "", statusCode, classifyRequestError(serviceLabel, asyncRequest.URL.String(), ctx.Err())
 		}
@@ -2366,6 +2358,23 @@ func renderToolLabel(part map[string]any) string {
 	return label
 }
 
+// HTML-comment sentinels that wrap rendered tool/file blocks. The webapp post
+// component splits the message on these markers to render each block with an
+// auto-collapsing UI; standard markdown renderers ignore HTML comments so
+// non-OCS clients still see the full content as plain text.
+const (
+	openCodeToolBlockStart = "<!--OCS_TOOL_START-->"
+	openCodeToolBlockEnd   = "<!--OCS_TOOL_END-->"
+)
+
+func wrapToolBlock(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	return openCodeToolBlockStart + "\n" + body + "\n" + openCodeToolBlockEnd
+}
+
 func renderStoredToolBlock(label, input, output string) string {
 	if strings.HasPrefix(strings.TrimSpace(label), "파일") {
 		return renderFileBlock(label, output)
@@ -2385,7 +2394,7 @@ func renderToolBlock(label, input, output string) string {
 	if output = sanitizeTerminalText(output); output != "" {
 		blocks = append(blocks, "터미널 출력:\n\n"+fencedCodeBlock(codeLanguageForTool(label, output), output))
 	}
-	return strings.TrimSpace(strings.Join(blocks, "\n\n"))
+	return wrapToolBlock(strings.TrimSpace(strings.Join(blocks, "\n\n")))
 }
 
 func renderFilePart(part map[string]any) string {
@@ -2409,7 +2418,7 @@ func renderFileBlock(label, content string) string {
 	if content = sanitizeTerminalText(content); content != "" {
 		blocks = append(blocks, "소스:\n\n"+fencedCodeBlock(codeLanguageForFilename(label, content), content))
 	}
-	return strings.TrimSpace(strings.Join(blocks, "\n\n"))
+	return wrapToolBlock(strings.TrimSpace(strings.Join(blocks, "\n\n")))
 }
 
 func extractToolInput(part map[string]any) string {

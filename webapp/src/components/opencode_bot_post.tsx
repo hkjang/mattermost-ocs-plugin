@@ -3,6 +3,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import type {WebSocketMessage} from '@mattermost/client';
 
 import PostText from './post_text';
+import {CollapsibleToolBlock, messageHasToolBlocks, splitMessageSegments} from './tool_block';
 
 import type {CodingTask} from '../client';
 import {getCodingTask, runCodingTaskCommand} from '../client';
@@ -378,12 +379,22 @@ export default function OpenCodeBotPost(props: Props) {
                 </>
             )}
             {(hasVisibleResponse || (generating && !precontent && !reasoningMessage)) && (
-                <PostText
-                    channelID={props.post.channel_id}
-                    message={renderableMessage.responseMessage}
-                    postID={props.post.id}
-                    showCursor={generating && !precontent && hasVisibleResponse}
-                />
+                messageHasToolBlocks(renderableMessage.responseMessage) ? (
+                    <ResponseSegments
+                        channelID={props.post.channel_id}
+                        message={renderableMessage.responseMessage}
+                        postID={props.post.id}
+                        showCursor={generating && !precontent && hasVisibleResponse}
+                        streaming={generating}
+                    />
+                ) : (
+                    <PostText
+                        channelID={props.post.channel_id}
+                        message={renderableMessage.responseMessage}
+                        postID={props.post.id}
+                        showCursor={generating && !precontent && hasVisibleResponse}
+                    />
+                )
             )}
             {toolStatus && generating && !precontent && (
                 <span style={toolStatusStyle}>
@@ -397,6 +408,58 @@ export default function OpenCodeBotPost(props: Props) {
             )}
         </div>
     );
+}
+
+type ResponseSegmentsProps = {
+    channelID: string;
+    message: string;
+    postID: string;
+    showCursor: boolean;
+    streaming: boolean;
+};
+
+function ResponseSegments(props: ResponseSegmentsProps) {
+    const segments = useMemo(() => splitMessageSegments(props.message), [props.message]);
+    if (segments.length === 0) {
+        return null;
+    }
+    const lastTextIndex = findLastTextSegmentIndex(segments);
+    return (
+        <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+            {segments.map((segment, index) => {
+                if (segment.kind === 'tool') {
+                    return (
+                        <CollapsibleToolBlock
+                            key={`tool-${index}`}
+                            channelID={props.channelID}
+                            content={segment.content}
+                            postID={props.postID}
+                            streaming={props.streaming}
+                            toolName={segment.toolName}
+                        />
+                    );
+                }
+                return (
+                    <PostText
+                        key={`text-${index}`}
+                        channelID={props.channelID}
+                        message={segment.content}
+                        postID={props.postID}
+                        showCursor={props.showCursor && index === lastTextIndex}
+                    />
+                );
+            })}
+        </div>
+    );
+}
+
+function findLastTextSegmentIndex(segments: ReturnType<typeof splitMessageSegments>) {
+    for (let index = segments.length - 1; index >= 0; index -= 1) {
+        if (segments[index].kind === 'text') {
+            return index;
+        }
+    }
+    return -1;
 }
 
 function extractCodingTask(post: any): CodingTask | null {

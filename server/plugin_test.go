@@ -164,7 +164,7 @@ func TestOpenCodeStreamStateSeparatesOfficialPartTypes(t *testing.T) {
 	}))
 
 	view := state.view()
-	require.Equal(t, "> 도구 호출: `read Read file (running)`\n\nFinal answer", view.Text)
+	require.Equal(t, "<!--OCS_TOOL_START-->\n> 도구 호출: `read Read file (running)`\n<!--OCS_TOOL_END-->\n\nFinal answer", view.Text)
 	require.Equal(t, "private reasoning", view.Reasoning)
 	require.Empty(t, view.ToolStatus)
 }
