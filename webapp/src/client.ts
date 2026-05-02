@@ -36,6 +36,9 @@ export type BotDefinition = {
     display_name: string;
     description?: string;
     mode?: 'conversation' | 'coding';
+    base_url?: string;
+    basic_auth_username?: string;
+    basic_auth_password?: string;
     default_agent?: string;
     default_model?: string;
     system_prompt?: string;

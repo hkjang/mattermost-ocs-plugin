@@ -23,6 +23,9 @@ type DraftBotDefinition = {
     display_name: string;
     description: string;
     mode: 'conversation' | 'coding';
+    base_url: string;
+    basic_auth_username: string;
+    basic_auth_password: string;
     default_agent: string;
     default_model: string;
     system_prompt: string;
@@ -221,12 +224,6 @@ export default function ConfigSetting(props: CustomSettingProps) {
     );
 
     const validationMessages = useMemo(() => validateConfig(config), [config]);
-    const providerOptions = useMemo(() => buildProviderOptions(connection), [connection]);
-    const defaultModelOptions = useMemo(
-        () => buildModelOptions(connection, config.opencode_defaults.provider_id),
-        [connection, config.opencode_defaults.provider_id],
-    );
-    const agentOptions = useMemo(() => buildAgentOptions(connection), [connection]);
     const botModelOptions = useMemo(() => buildModelOptions(connection, ''), [connection]);
 
     const applyConfig = (nextConfig: DraftPluginConfig, nextSelectedBotID?: string) => {
@@ -347,8 +344,11 @@ export default function ConfigSetting(props: CustomSettingProps) {
 
             <section style={sectionStyle}>
                 <div style={{fontSize: '16px', fontWeight: 600}}>{'Service'}</div>
+                <div style={{fontSize: '12px', opacity: 0.8}}>
+                    {'Optional defaults. Each bot can override the base URL and basic auth below; provider, model, agent, and tool policy are picked at chat time.'}
+                </div>
                 <div style={gridTwoStyle}>
-                    <LabeledField label={'Base URL'}>
+                    <LabeledField label={'Default Base URL (optional)'}>
                         <input
                             disabled={disabled}
                             onChange={(event) => updateConfig('service', {...config.service, base_url: event.target.value})}
@@ -357,7 +357,7 @@ export default function ConfigSetting(props: CustomSettingProps) {
                             value={config.service.base_url}
                         />
                     </LabeledField>
-                    <LabeledField label={'Allow Hosts'}>
+                    <LabeledField label={'Allow Hosts (optional)'}>
                         <input
                             disabled={disabled}
                             onChange={(event) => updateConfig('service', {...config.service, allow_hosts: event.target.value})}
@@ -366,70 +366,12 @@ export default function ConfigSetting(props: CustomSettingProps) {
                             value={config.service.allow_hosts}
                         />
                     </LabeledField>
-                    <LabeledField label={'Username'}>
+                    <LabeledField label={'Default Basic Auth Username (optional)'}>
                         <input disabled={disabled} onChange={(event) => updateConfig('service', {...config.service, username: event.target.value})} style={fieldStyle} value={config.service.username}/>
                     </LabeledField>
-                    <LabeledField label={'Password'}>
+                    <LabeledField label={'Default Basic Auth Password (optional)'}>
                         <input disabled={disabled} onChange={(event) => updateConfig('service', {...config.service, password: event.target.value})} style={fieldStyle} type='password' value={config.service.password}/>
                     </LabeledField>
-                </div>
-            </section>
-
-            <section style={sectionStyle}>
-                <div style={{fontSize: '16px', fontWeight: 600}}>{'Runtime Defaults'}</div>
-                <div style={gridTwoStyle}>
-                    <NumberField label={'Timeout (seconds)'} value={config.runtime.default_timeout_seconds} onChange={(value) => updateConfig('runtime', {...config.runtime, default_timeout_seconds: value})}/>
-                    <NumberField label={'Streaming update (ms)'} value={config.runtime.streaming_update_ms} onChange={(value) => updateConfig('runtime', {...config.runtime, streaming_update_ms: value})}/>
-                    <NumberField label={'Max input length'} value={config.runtime.max_input_length} onChange={(value) => updateConfig('runtime', {...config.runtime, max_input_length: value})}/>
-                    <NumberField label={'Max output length'} value={config.runtime.max_output_length} onChange={(value) => updateConfig('runtime', {...config.runtime, max_output_length: value})}/>
-                    <NumberField label={'Context post limit'} value={config.runtime.context_post_limit} onChange={(value) => updateConfig('runtime', {...config.runtime, context_post_limit: value})}/>
-                    <LabeledField label={'Streaming'}>
-                        <input checked={config.runtime.enable_streaming} disabled={disabled} onChange={(event) => updateConfig('runtime', {...config.runtime, enable_streaming: event.target.checked})} type='checkbox'/>
-                    </LabeledField>
-                    <LabeledField label={'Debug logs'}>
-                        <input checked={config.runtime.enable_debug_logs} disabled={disabled} onChange={(event) => updateConfig('runtime', {...config.runtime, enable_debug_logs: event.target.checked})} type='checkbox'/>
-                    </LabeledField>
-                    <LabeledField label={'Usage logs'}>
-                        <input checked={config.runtime.enable_usage_logs} disabled={disabled} onChange={(event) => updateConfig('runtime', {...config.runtime, enable_usage_logs: event.target.checked})} type='checkbox'/>
-                    </LabeledField>
-                </div>
-
-                <div style={gridTwoStyle}>
-                    <CatalogField
-                        disabled={disabled}
-                        emptyLabel={'Server default'}
-                        label={'Default Provider'}
-                        onChange={(value) => updateConfig('opencode_defaults', {...config.opencode_defaults, provider_id: value})}
-                        options={providerOptions}
-                        placeholder={'provider id'}
-                        value={config.opencode_defaults.provider_id}
-                    />
-                    <CatalogField
-                        disabled={disabled}
-                        emptyLabel={'Server default'}
-                        label={'Default Model'}
-                        onChange={(value) => updateConfig('opencode_defaults', {...config.opencode_defaults, model_id: value})}
-                        options={defaultModelOptions}
-                        placeholder={'provider/model or model'}
-                        value={config.opencode_defaults.model_id}
-                    />
-                    <CatalogField
-                        disabled={disabled}
-                        emptyLabel={'Server default'}
-                        label={'Default Agent'}
-                        onChange={(value) => updateConfig('opencode_defaults', {...config.opencode_defaults, agent_id: value})}
-                        options={agentOptions}
-                        placeholder={'agent id'}
-                        value={config.opencode_defaults.agent_id}
-                    />
-                    <LabeledField label={'Reuse Scope'}>
-                        <select disabled={disabled} onChange={(event) => updateConfig('session_policy', {...config.session_policy, reuse_scope: event.target.value})} style={fieldStyle} value={config.session_policy.reuse_scope}>
-                            <option value='thread'>{'thread'}</option>
-                            <option value='dm'>{'dm'}</option>
-                            <option value='channel'>{'channel'}</option>
-                        </select>
-                    </LabeledField>
-                    <NumberField label={'Idle expire (minutes)'} value={config.session_policy.idle_expire_minutes} onChange={(value) => updateConfig('session_policy', {...config.session_policy, idle_expire_minutes: value})}/>
                 </div>
             </section>
 
@@ -461,7 +403,7 @@ export default function ConfigSetting(props: CustomSettingProps) {
                                 <strong>{bot.display_name || bot.username || 'New bot'}</strong>
                                 <span style={{fontSize: '12px', opacity: 0.8}}>{`@${bot.username || 'username'}`}</span>
                                 <span style={{fontSize: '12px', opacity: 0.8}}>{bot.mode === 'coding' ? 'coding' : 'conversation'}</span>
-                                <span style={{fontSize: '12px', opacity: 0.8}}>{`${bot.default_agent || 'server default'} / ${bot.default_model || 'server default'}`}</span>
+                                <span style={{fontSize: '12px', opacity: 0.8}}>{bot.base_url || config.service.base_url || 'no base url'}</span>
                             </button>
                         ))}
                     </div>
@@ -486,29 +428,29 @@ export default function ConfigSetting(props: CustomSettingProps) {
                                         <option value='coding'>{'coding'}</option>
                                     </select>
                                 </LabeledField>
+                                <LabeledField label={'Include Context'}>
+                                    <input checked={selectedBot.include_context_by_default} disabled={disabled} onChange={(event) => updateBot(selectedBot.local_id, (bot) => ({...bot, include_context_by_default: event.target.checked}))} type='checkbox'/>
+                                </LabeledField>
+                                <LabeledField label={'Base URL (optional)'}>
+                                    <input disabled={disabled} onChange={(event) => updateBot(selectedBot.local_id, (bot) => ({...bot, base_url: event.target.value}))} placeholder={'https://opencode.bot.example.com'} style={fieldStyle} value={selectedBot.base_url}/>
+                                </LabeledField>
                                 <CatalogField
                                     disabled={disabled}
-                                    emptyLabel={'Server default'}
-                                    label={'Default Agent'}
-                                    onChange={(value) => updateBot(selectedBot.local_id, (bot) => ({...bot, default_agent: value}))}
-                                    options={agentOptions}
-                                    placeholder={'agent id'}
-                                    value={selectedBot.default_agent}
-                                />
-                                <CatalogField
-                                    disabled={disabled}
-                                    emptyLabel={'Server default'}
-                                    label={'Default Model'}
+                                    emptyLabel={'Pick at chat time'}
+                                    label={'Default Model (optional)'}
                                     onChange={(value) => updateBot(selectedBot.local_id, (bot) => ({...bot, default_model: value}))}
                                     options={botModelOptions}
                                     placeholder={'provider/model or model'}
                                     value={selectedBot.default_model}
                                 />
-                                <LabeledField label={'Tool Policy'}>
-                                    <input disabled={disabled} onChange={(event) => updateBot(selectedBot.local_id, (bot) => ({...bot, tool_policy: event.target.value}))} placeholder={'inherit, none, or ["tool-a","tool-b"]'} style={fieldStyle} value={selectedBot.tool_policy}/>
+                                <LabeledField label={'Basic Auth Username (optional)'}>
+                                    <input disabled={disabled} onChange={(event) => updateBot(selectedBot.local_id, (bot) => ({...bot, basic_auth_username: event.target.value}))} style={fieldStyle} value={selectedBot.basic_auth_username}/>
                                 </LabeledField>
-                                <LabeledField label={'Include Context'}>
-                                    <input checked={selectedBot.include_context_by_default} disabled={disabled} onChange={(event) => updateBot(selectedBot.local_id, (bot) => ({...bot, include_context_by_default: event.target.checked}))} type='checkbox'/>
+                                <LabeledField label={'Basic Auth Password (optional)'}>
+                                    <input disabled={disabled} onChange={(event) => updateBot(selectedBot.local_id, (bot) => ({...bot, basic_auth_password: event.target.value}))} style={fieldStyle} type='password' value={selectedBot.basic_auth_password}/>
+                                </LabeledField>
+                                <LabeledField label={'Tool Policy (optional)'}>
+                                    <input disabled={disabled} onChange={(event) => updateBot(selectedBot.local_id, (bot) => ({...bot, tool_policy: event.target.value}))} placeholder={'inherit, none, or ["tool-a","tool-b"]'} style={fieldStyle} value={selectedBot.tool_policy}/>
                                 </LabeledField>
                             </div>
 
@@ -597,8 +539,6 @@ export default function ConfigSetting(props: CustomSettingProps) {
                         {connection.version && <div>{`Version: ${connection.version}`}</div>}
                         {connection.detail && <div>{connection.detail}</div>}
                         {connection.hint && <div>{connection.hint}</div>}
-                        {(connection.agents || []).length > 0 && <div>{`Agents: ${(connection.agents || []).map((item) => item.id).join(', ')}`}</div>}
-                        {(connection.providers || []).length > 0 && <div>{`Providers: ${(connection.providers || []).map((item) => item.id).join(', ')}`}</div>}
                     </div>
                 )}
                 {(status?.managed_bots || []).length > 0 && (
@@ -607,7 +547,6 @@ export default function ConfigSetting(props: CustomSettingProps) {
                             <div key={bot.bot_id}>
                                 <strong>{bot.display_name || bot.username}</strong>
                                 <div>{`@${bot.username}`}</div>
-                                <div>{`${bot.agent_id || 'server default'} / ${bot.model_id || 'server default'}`}</div>
                                 <div>{`Registered: ${bot.registered ? 'yes' : 'no'}, Active: ${bot.active ? 'yes' : 'no'}`}</div>
                                 {bot.status_message && <div>{bot.status_message}</div>}
                             </div>
@@ -755,6 +694,9 @@ function createEmptyBot(): DraftBotDefinition {
         display_name: '',
         description: '',
         mode: 'conversation',
+        base_url: '',
+        basic_auth_username: '',
+        basic_auth_password: '',
         default_agent: '',
         default_model: '',
         system_prompt: '',
@@ -808,6 +750,9 @@ function buildStoredConfig(config: DraftPluginConfig): AdminPluginConfig {
             display_name: bot.display_name.trim(),
             description: bot.description.trim(),
             mode: bot.mode,
+            base_url: bot.base_url.trim(),
+            basic_auth_username: bot.basic_auth_username.trim(),
+            basic_auth_password: bot.basic_auth_password,
             default_agent: bot.default_agent.trim(),
             default_model: bot.default_model.trim(),
             system_prompt: bot.system_prompt,
@@ -861,6 +806,9 @@ function normalizeStoredBot(bot: BotDefinition): DraftBotDefinition {
         display_name: stringValue(bot.display_name),
         description: stringValue(bot.description),
         mode: bot.mode === 'coding' ? 'coding' : 'conversation',
+        base_url: stringValue(bot.base_url),
+        basic_auth_username: stringValue(bot.basic_auth_username),
+        basic_auth_password: stringValue(bot.basic_auth_password),
         default_agent: stringValue(bot.default_agent),
         default_model: stringValue(bot.default_model),
         system_prompt: stringValue(bot.system_prompt),
@@ -923,10 +871,8 @@ function serializeSettingValue(value: unknown) {
 
 function validateConfig(config: DraftPluginConfig) {
     const messages: string[] = [];
-    if (!config.service.base_url.trim()) {
-        messages.push('Service connection: base URL is required.');
-    }
     const usernames = new Set<string>();
+    let needsBaseURL = false;
     config.bots.forEach((bot) => {
         const username = bot.username.trim().toLowerCase();
         if (!username) {
@@ -937,7 +883,13 @@ function validateConfig(config: DraftPluginConfig) {
             messages.push(`Duplicate bot username: ${username}`);
         }
         usernames.add(username);
+        if (!bot.base_url.trim() && !config.service.base_url.trim()) {
+            needsBaseURL = true;
+        }
     });
+    if (needsBaseURL) {
+        messages.push('At least one base URL must be set, either at the service level or per bot.');
+    }
     return messages;
 }
 
@@ -950,10 +902,6 @@ function pickSelectedBotID(bots: DraftBotDefinition[], current: string) {
 
 function splitCommaSeparated(value: string) {
     return value.split(',').map((item) => item.trim()).filter(Boolean);
-}
-
-function buildProviderOptions(connection: ConnectionStatus | null) {
-    return uniqueStrings((connection?.providers || []).map((provider) => provider.id));
 }
 
 function buildModelOptions(connection: ConnectionStatus | null, providerID: string) {
@@ -970,10 +918,6 @@ function buildModelOptions(connection: ConnectionStatus | null, providerID: stri
     });
 
     return uniqueStrings(models);
-}
-
-function buildAgentOptions(connection: ConnectionStatus | null) {
-    return uniqueStrings((connection?.agents || []).map((agent) => agent.id));
 }
 
 function buildCatalogOptions(currentValue: string, options: string[]) {

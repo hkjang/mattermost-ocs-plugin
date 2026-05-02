@@ -83,6 +83,45 @@ type runtimeConfiguration struct {
 	SessionIdleExpire       time.Duration
 }
 
+// deriveForBot returns a configuration scoped to a particular bot. If the bot
+// supplies its own base URL or basic auth credentials, those override the
+// service-level defaults so each bot can target a different OpenCode server.
+func (c *runtimeConfiguration) deriveForBot(bot BotDefinition) *runtimeConfiguration {
+	if c == nil {
+		return nil
+	}
+
+	derived := *c
+	if raw := strings.TrimSpace(bot.BaseURL); raw != "" {
+		if parsed, err := url.Parse(raw); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			derived.OpenCodeBaseURL = strings.TrimRight(parsed.String(), "/")
+			derived.ParsedBaseURL = parsed
+
+			host := strings.ToLower(parsed.Hostname())
+			if host != "" {
+				existing := append([]string{}, derived.AllowHosts...)
+				seen := false
+				for _, h := range existing {
+					if h == host {
+						seen = true
+						break
+					}
+				}
+				if !seen {
+					derived.AllowHosts = append(existing, host)
+				}
+			}
+		}
+	}
+	if v := strings.TrimSpace(bot.BasicAuthUsername); v != "" {
+		derived.OpenCodeUsername = v
+	}
+	if v := strings.TrimSpace(bot.BasicAuthPassword); v != "" {
+		derived.OpenCodePassword = v
+	}
+	return &derived
+}
+
 func (c *configuration) Clone() *configuration {
 	clone := *c
 	return &clone

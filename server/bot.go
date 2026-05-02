@@ -22,6 +22,9 @@ type BotDefinition struct {
 	DisplayName             string            `json:"display_name"`
 	Description             string            `json:"description"`
 	Mode                    string            `json:"mode"`
+	BaseURL                 string            `json:"base_url"`
+	BasicAuthUsername       string            `json:"basic_auth_username"`
+	BasicAuthPassword       string            `json:"basic_auth_password"`
 	DefaultAgent            string            `json:"default_agent"`
 	DefaultModel            string            `json:"default_model"`
 	SystemPrompt            string            `json:"system_prompt"`
@@ -64,6 +67,9 @@ func (b BotDefinition) normalize() (BotDefinition, error) {
 	b.DisplayName = strings.TrimSpace(b.DisplayName)
 	b.Description = strings.TrimSpace(b.Description)
 	b.Mode = normalizeBotMode(b.Mode)
+	b.BaseURL = strings.TrimRight(strings.TrimSpace(b.BaseURL), "/")
+	b.BasicAuthUsername = strings.TrimSpace(b.BasicAuthUsername)
+	b.BasicAuthPassword = strings.TrimSpace(b.BasicAuthPassword)
 	b.DefaultAgent = strings.TrimSpace(b.DefaultAgent)
 	b.DefaultModel = strings.TrimSpace(b.DefaultModel)
 	b.SystemPrompt = strings.TrimSpace(b.SystemPrompt)

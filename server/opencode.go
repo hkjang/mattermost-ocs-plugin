@@ -321,7 +321,7 @@ func (p *Plugin) invokeOpenCodeStream(
 		}
 	}()
 
-	idleWindow := maxDuration(2*time.Second, minDuration(8*time.Second, maxDuration(cfg.StreamingUpdateInterval*4, 2*time.Second)))
+	idleWindow := maxDuration(cfg.DefaultTimeout, 2*time.Minute)
 	timer := time.NewTimer(idleWindow)
 	defer timer.Stop()
 

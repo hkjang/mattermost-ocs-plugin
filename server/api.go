@@ -308,6 +308,10 @@ func (p *Plugin) handleResetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if bot := cfg.getBotByID(item.BotID); bot != nil {
+		cfg = cfg.deriveForBot(*bot)
+	}
+
 	p.resetConversationSession(r.Context(), cfg, conversationKey)
 	if conversationKey == "" {
 		if err := p.deleteConversationSession("", item.SessionID); err != nil {
@@ -337,17 +341,27 @@ func (p *Plugin) handleAbortSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := strings.TrimSpace(request.SessionID)
+	var sessionItem conversationSession
 	if sessionID == "" {
-		item, err := p.resolveRequestedSession(request)
-		if err != nil {
-			writeError(w, http.StatusNotFound, err)
+		var resolveErr error
+		sessionItem, resolveErr = p.resolveRequestedSession(request)
+		if resolveErr != nil {
+			writeError(w, http.StatusNotFound, resolveErr)
 			return
 		}
-		sessionID = item.SessionID
+		sessionID = sessionItem.SessionID
+	} else if existing, lookupErr := p.getConversationSessionByID(sessionID); lookupErr == nil {
+		sessionItem = existing
 	}
 	if sessionID == "" {
 		writeError(w, http.StatusBadRequest, errors.New("session_id is required"))
 		return
+	}
+
+	if sessionItem.BotID != "" {
+		if bot := cfg.getBotByID(sessionItem.BotID); bot != nil {
+			cfg = cfg.deriveForBot(*bot)
+		}
 	}
 
 	ok, err := p.abortOpenCodeSession(r.Context(), cfg, sessionID)
@@ -376,6 +390,7 @@ func (p *Plugin) handleCodingWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
+	cfg = cfg.deriveForBot(*bot)
 
 	snapshot, err := p.inspectCodingWorkspace(r.Context(), cfg, *bot)
 	if err != nil {
@@ -407,6 +422,7 @@ func (p *Plugin) handleCodingSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
+	cfg = cfg.deriveForBot(*bot)
 
 	results, err := p.searchCodingWorkspace(r.Context(), cfg, *bot, query, limit)
 	if err != nil {
@@ -471,6 +487,7 @@ func (p *Plugin) handleCodingCommandRun(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, errors.New("coding bot configuration is unavailable"))
 		return
 	}
+	cfg = cfg.deriveForBot(*bot)
 
 	updatedTask, err := p.executeCodingCommand(r.Context(), cfg, *bot, task, request.CommandID)
 	if err != nil {

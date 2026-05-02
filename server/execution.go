@@ -115,6 +115,8 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 		}
 	}
 
+	cfg = cfg.deriveForBot(*bot)
+
 	prompt, err := p.buildExecutionPrompt(ctx, cfg, request, *bot)
 	if err != nil {
 		return nil, err
