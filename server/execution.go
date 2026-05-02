@@ -1069,6 +1069,12 @@ func stripLeadingOpenCodeLabel(value string) string {
 }
 
 func isMissingResourceError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "notfounderror") {
+		return true
+	}
 	var callErr *serviceCallError
 	if !errors.As(err, &callErr) {
 		return false
