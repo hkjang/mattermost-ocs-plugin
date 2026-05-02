@@ -397,6 +397,7 @@ func (p *Plugin) invokeOpenCodeStream(
 				onUpdate(view, false)
 			}
 			if streamState.completed {
+				p.API.LogInfo("[OCS-DEBUG] Stream completed", "event_type", item.event.Type, "event_event", item.event.Event, "text_len", len(view.Text))
 				if latest, latestErr := p.getLatestOpenCodeReply(ctx, cfg, sessionID); latestErr == nil && latest != "" {
 					view.Text = truncateString(mergeOpenCodeStreamOutput(view.Text, latest), cfg.MaxOutputLength)
 				}
@@ -1093,7 +1094,22 @@ func (s *openCodeStreamState) apply(event openCodeStreamEvent) bool {
 		}
 	}
 
-	if strings.EqualFold(eventType, "session.idle") || strings.EqualFold(eventType, "session.error") || strings.EqualFold(eventType, "session.turn.close") {
+	if strings.EqualFold(eventType, "session.error") {
+		errMsg := stringifyValue(properties["error"])
+		if errMsg == "" {
+			errMsg = stringifyValue(properties["message"])
+		}
+		if errMsg == "" {
+			errMsg = "Unknown OpenCode session error"
+		}
+		if s.rawText == "" {
+			s.rawText = fmt.Sprintf("에러 발생: %s", errMsg)
+		} else {
+			s.rawText += fmt.Sprintf("\n\n[에러 발생: %s]", errMsg)
+		}
+		s.completed = true
+		changed = true
+	} else if strings.EqualFold(eventType, "session.idle") || strings.EqualFold(eventType, "session.turn.close") {
 		s.completed = true
 		changed = true
 	}
