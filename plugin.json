@@ -1,7 +1,7 @@
 {
     "id": "com.mattermost.ocs-plugin",
     "name": "OpenCode",
-    "version": "0.1.28",
+    "version": "0.1.29",
     "description": "Mattermost bots backed by OpenCode sessions, agent defaults, and streaming replies.",
     "homepage_url": "https://github.com/hkjang/mattermost-ocs-plugin",
     "support_url": "https://github.com/hkjang/mattermost-ocs-plugin/issues",

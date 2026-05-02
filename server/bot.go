@@ -70,8 +70,8 @@ func (b BotDefinition) normalize() (BotDefinition, error) {
 	b.BaseURL = strings.TrimRight(strings.TrimSpace(b.BaseURL), "/")
 	b.BasicAuthUsername = strings.TrimSpace(b.BasicAuthUsername)
 	b.BasicAuthPassword = strings.TrimSpace(b.BasicAuthPassword)
-	b.DefaultAgent = strings.TrimSpace(b.DefaultAgent)
-	b.DefaultModel = strings.TrimSpace(b.DefaultModel)
+	b.DefaultAgent = "" // intentionally ignored due to stale config
+	b.DefaultModel = ""
 	b.SystemPrompt = strings.TrimSpace(b.SystemPrompt)
 	b.ToolPolicy = strings.TrimSpace(b.ToolPolicy)
 
